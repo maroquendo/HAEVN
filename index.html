@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>HAEVN</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="manifest" href="/manifest.json" />
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.27.0"
+  }
+}
+</script>
+<style>
+  .login-background {
+    background-color: #87CEEB; /* Sky blue */
+    background-image:
+      /* Big soft cloud */
+      radial-gradient(ellipse at 25% 25%, hsla(0,0%,100%,0.9) 0%, hsla(0,0%,100%,0) 50%),
+      /* another big cloud */
+      radial-gradient(ellipse at 75% 75%, hsla(0,0%,100%,0.8) 0%, hsla(0,0%,100%,0) 40%),
+      /* Mid cloud */
+      radial-gradient(ellipse at 50% 80%, hsla(0,0%,100%,0.7) 0%, hsla(0,0%,100%,0) 35%),
+      /* Small distant cloud */
+      radial-gradient(ellipse at 80% 15%, hsla(0,0%,100%,0.6) 0%, hsla(0,0%,100%,0) 30%);
+  }
+</style>
+</head>
+  <body class="bg-gray-100 dark:bg-gray-900">
+    <div id="root"></div>
+    <script src="https://www.youtube.com/iframe_api"></script>
+    <script type="module" src="/index.tsx"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js').then(registration => {
+            console.log('ServiceWorker registration successful with scope: ', registration.scope);
+          }, err => {
+            console.log('ServiceWorker registration failed: ', err);
+          });
+        });
+      }
+    </script>
+  </body>
+</html>
