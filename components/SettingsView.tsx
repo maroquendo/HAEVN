@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ParentalControls, Family, User } from '../types';
-import { InfoIcon, CogIcon, MoreVerticalIcon, EditIcon, TrashIcon, UserPlusIcon, KeyIcon, CloseIcon } from './icons';
+import { InfoIcon, CogIcon, CloseIcon } from './icons';
 
 type SettingsTab = 'general' | 'about';
 
@@ -24,30 +24,13 @@ const Modal: React.FC<{ children: React.ReactNode; onClose: () => void; title: s
     </div>
 );
 
-const SettingsView: React.FC<SettingsViewProps> = ({ controls, onUpdateControls, family, onAddMember, onEditMember, onRemoveMember }) => {
+const SettingsView: React.FC<SettingsViewProps> = ({ controls, onUpdateControls, family }) => {
     const [localControls, setLocalControls] = useState<ParentalControls>(controls);
     const [saved, setSaved] = useState(false);
-    const [showAddChildModal, setShowAddChildModal] = useState(false);
-    const [showAddParentModal, setShowAddParentModal] = useState(false);
-    const [newMemberName, setNewMemberName] = useState('');
-    const [newlyAddedChild, setNewlyAddedChild] = useState<User | null>(null);
-    const [editingUser, setEditingUser] = useState<User | null>(null);
-    const [removingUser, setRemovingUser] = useState<User | null>(null);
-    const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-    const menuRef = useRef<HTMLDivElement>(null);
 
+    // Notification state
     const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default');
     const [activeTab, setActiveTab] = useState<SettingsTab>('general');
-
-    useEffect(() => {
-        const handleClickOutside = (event: MouseEvent) => {
-            if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-                setOpenMenuId(null);
-            }
-        };
-        document.addEventListener("mousedown", handleClickOutside);
-        return () => document.removeEventListener("mousedown", handleClickOutside);
-    }, [menuRef]);
 
     useEffect(() => {
         setLocalControls(controls);
@@ -102,32 +85,6 @@ const SettingsView: React.FC<SettingsViewProps> = ({ controls, onUpdateControls,
         }
     };
 
-    const handleAddMemberSubmit = (role: 'child' | 'parent') => {
-        if (newMemberName.trim()) {
-            const newMember = onAddMember(newMemberName.trim(), role);
-            if (role === 'child' && newMember) {
-                setNewlyAddedChild(newMember);
-            }
-            setNewMemberName('');
-            setShowAddChildModal(false);
-            setShowAddParentModal(false);
-        }
-    };
-
-    const handleEditUserSubmit = () => {
-        if (editingUser && newMemberName.trim()) {
-            onEditMember(editingUser.id, newMemberName.trim());
-        }
-        setEditingUser(null);
-        setNewMemberName('');
-    };
-
-    const handleRemoveUserConfirm = () => {
-        if (removingUser) {
-            onRemoveMember(removingUser.id);
-        }
-        setRemovingUser(null);
-    }
 
     const TabButton: React.FC<{ tab: SettingsTab, label: string, icon: React.FC<{ className?: string }> }> = ({ tab, label, icon: Icon }) => (
         <button
@@ -146,10 +103,10 @@ const SettingsView: React.FC<SettingsViewProps> = ({ controls, onUpdateControls,
     if (!family) return null;
 
     return (
-        <div>
-            <h2 className="text-2xl font-bold mb-6 text-gray-800 dark:text-white">Settings</h2>
+        <div className="max-w-4xl mx-auto p-4">
+            <h2 className="text-3xl font-extrabold mb-8 text-transparent bg-clip-text bg-gradient-to-r from-gray-900 to-gray-600 dark:from-white dark:to-gray-400">Settings</h2>
 
-            <div className="mb-6 border-b border-gray-200 dark:border-gray-700">
+            <div className="mb-8 border-b border-gray-200 dark:border-gray-700">
                 <div className="flex space-x-2">
                     <TabButton tab="general" label="General" icon={CogIcon} />
                     <TabButton tab="about" label="About" icon={InfoIcon} />
@@ -157,23 +114,32 @@ const SettingsView: React.FC<SettingsViewProps> = ({ controls, onUpdateControls,
             </div>
 
             {activeTab === 'about' && (
-                <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md max-w-2xl mb-8 animate-fade-in">
-                    <h3 className="text-xl font-bold mb-4 flex items-center">
+                <div className="glass-panel p-8 rounded-3xl shadow-lg max-w-2xl mb-8 animate-fade-in">
+                    <h3 className="text-2xl font-bold mb-4 flex items-center">
                         About HAEVN
                     </h3>
-                    <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
-                        Created with love for Annabella and Emiliana (A+E) to be a safe place to learn about the world.
+                    <p className="text-gray-600 dark:text-gray-300 leading-relaxed text-lg">
+                        Created with ❤️ for Annabella and Emiliana (A+E).
+                        <br />
+                        A safe, curated space to explore the world.
                     </p>
+                    <div className="mt-8 text-xs text-gray-400">
+                        Version 1.0.0 • Connected to {family.name}
+                    </div>
                 </div>
             )}
 
             {activeTab === 'general' && (
                 <div className="space-y-8 animate-fade-in">
-                    <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md max-w-2xl">
-                        <h3 className="text-xl font-bold mb-4">Notification Settings</h3>
+
+                    {/* Notification Section */}
+                    <div className="glass-panel p-8 rounded-3xl shadow-lg max-w-2xl border border-white/20">
+                        <h3 className="text-xl font-bold mb-4 flex items-center gap-2">
+                            Notification Settings
+                        </h3>
                         <div className="flex items-center justify-between">
                             <div>
-                                <p className="text-gray-600 dark:text-gray-400">Get notified about new wishes and other updates.</p>
+                                <p className="text-gray-600 dark:text-gray-300">Get notified about new wishes and activities.</p>
                                 <p className="text-sm font-medium mt-2">
                                     Status: <span className={`capitalize font-bold ${notificationPermission === 'granted' ? 'text-green-500' : notificationPermission === 'denied' ? 'text-red-500' : 'text-yellow-500'}`}>{notificationPermission}</span>
                                 </p>
@@ -181,191 +147,110 @@ const SettingsView: React.FC<SettingsViewProps> = ({ controls, onUpdateControls,
                             <button
                                 onClick={handleEnableNotifications}
                                 disabled={notificationPermission === 'granted' || notificationPermission === 'denied'}
-                                className="bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-indigo-700 transition disabled:bg-gray-400 disabled:cursor-not-allowed"
+                                className="bg-gradient-to-r from-indigo-600 to-purple-600 text-white font-bold py-3 px-6 rounded-xl hover:shadow-lg hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 disabled:shadow-none"
                                 title="Request permission to show browser notifications"
                             >
-                                {notificationPermission === 'granted' ? 'Enabled' : 'Enable Notifications'}
+                                {notificationPermission === 'granted' ? 'Enabled' : 'Enable'}
                             </button>
                         </div>
                     </div>
 
-                    <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md max-w-2xl">
-                        <div className="flex justify-between items-center mb-4">
-                            <h3 className="text-xl font-bold">Family Management</h3>
-                            <div className="flex space-x-2">
-                                <button onClick={() => setShowAddChildModal(true)} className="flex items-center space-x-2 text-sm bg-indigo-100 dark:bg-indigo-900/50 text-indigo-700 dark:text-indigo-300 font-semibold py-2 px-3 rounded-lg hover:bg-indigo-200 dark:hover:bg-indigo-900 transition" title="Create an invitation for a new child"><UserPlusIcon className="w-5 h-5" /><span>Add Child</span></button>
-                                <button onClick={() => setShowAddParentModal(true)} className="flex items-center space-x-2 text-sm bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 font-semibold py-2 px-3 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition" title="Add another parent or guardian"><UserPlusIcon className="w-5 h-5" /><span>Add Parent</span></button>
-                            </div>
-                        </div>
-                        <div className="space-y-3">
-                            {family.members.map(member => (
-                                <div key={member.id} className="flex items-center bg-gray-100 dark:bg-gray-700 p-2 rounded-lg">
-                                    <img src={member.avatarUrl} alt={member.name} className="w-10 h-10 rounded-full mr-3" />
-                                    <div className="flex-1">
-                                        <p className="font-semibold text-gray-800 dark:text-white">{member.name}</p>
-                                        <div className="flex items-center">
-                                            <p className="text-sm text-gray-500 dark:text-gray-400 capitalize">{member.role}</p>
-                                            {member.status === 'pending' && <span className="ml-2 text-xs font-bold px-2 py-0.5 rounded-full bg-yellow-200 text-yellow-800">Pending</span>}
-                                        </div>
-                                    </div>
-                                    {member.status === 'pending' && member.joinPin && (
-                                        <div className="flex items-center space-x-2">
-                                            <div className="text-sm text-gray-600 dark:text-gray-300 flex items-center bg-white dark:bg-gray-800 px-3 py-1 rounded-md">
-                                                <KeyIcon className="w-4 h-4 mr-2" />
-                                                PIN: <span className="font-bold ml-1 tracking-wider">{member.joinPin}</span>
-                                            </div>
-                                            <button
-                                                onClick={() => {
-                                                    const url = `${window.location.origin}?child_pin=${member.joinPin}`;
-                                                    navigator.clipboard.writeText(url);
-                                                    alert(`Magic Link copied for ${member.name}!`);
-                                                }}
-                                                className="bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-900/50 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 px-3 py-1 rounded-md text-xs font-bold transition-colors"
-                                                title="Copy a special link that logs them in automatically"
-                                            >
-                                                Copy Link 🔗
-                                            </button>
-                                        </div>
-                                    )}
-                                    <div className="relative ml-2" ref={menuRef}>
-                                        <button onClick={() => setOpenMenuId(openMenuId === member.id ? null : member.id)} className="p-2 rounded-full hover:bg-gray-200 dark:hover:bg-gray-600" title="Open member options"><MoreVerticalIcon className="w-5 h-5" /></button>
-                                        {openMenuId === member.id && (
-                                            <div className="absolute right-0 mt-2 w-32 bg-white dark:bg-gray-800 rounded-lg shadow-lg py-1 z-10 ring-1 ring-black ring-opacity-5">
-                                                <button onClick={() => { setEditingUser(member); setNewMemberName(member.name); setOpenMenuId(null); }} className="w-full text-left flex items-center space-x-2 px-3 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700" title="Edit member's name"><EditIcon /><span>Edit</span></button>
-                                                <button onClick={() => { setRemovingUser(member); setOpenMenuId(null); }} className="w-full text-left flex items-center space-x-2 px-3 py-2 text-sm text-red-500 hover:bg-red-50 dark:hover:bg-red-900/50" title="Remove member from family"><TrashIcon /><span>Remove</span></button>
-                                            </div>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
+                    {/* Parental Controls Section */}
+                    <div className="glass-panel p-8 rounded-3xl shadow-lg max-w-2xl border border-white/20">
+                        <h3 className="text-xl font-bold mb-6">Parental Controls</h3>
 
-                    <div className="bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md max-w-2xl">
-                        <h3 className="text-xl font-bold mb-4">Parental Controls</h3>
-                        <div className="flex items-center justify-between pb-6 border-b border-gray-200 dark:border-gray-700">
+                        {/* Master Toggle */}
+                        <div className="flex items-center justify-between pb-8 border-b border-gray-200 dark:border-gray-700">
                             <div>
-                                <h3 className="text-lg font-semibold">Enable Controls</h3>
+                                <h3 className="text-lg font-bold text-gray-800 dark:text-gray-200">Enable Controls</h3>
                                 <p className="text-sm text-gray-500 dark:text-gray-400">Turn all time limits and schedules on or off.</p>
                             </div>
-                            <label htmlFor="toggle" className="flex items-center cursor-pointer" title="Toggle all parental controls on or off">
+                            <label htmlFor="toggle" className="flex items-center cursor-pointer hover:scale-105 transition-transform" title="Toggle all parental controls on or off">
                                 <div className="relative">
                                     <input type="checkbox" id="toggle" className="sr-only" name="isEnabled" checked={localControls.isEnabled} onChange={handleInputChange} />
-                                    <div className="block bg-gray-300 dark:bg-gray-600 w-14 h-8 rounded-full"></div>
-                                    <div className="dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform"></div>
+                                    <div className={`block w-14 h-8 rounded-full transition-colors ${localControls.isEnabled ? 'bg-indigo-200 dark:bg-indigo-900' : 'bg-gray-300 dark:bg-gray-600'}`}></div>
+                                    <div className={`dot absolute left-1 top-1 bg-white w-6 h-6 rounded-full transition-transform shadow-md ${localControls.isEnabled ? 'translate-x-full bg-indigo-600' : ''}`}></div>
                                 </div>
                             </label>
-                            <style>{`
-                        input:checked ~ .dot {
-                            transform: translateX(100%);
-                            background-color: #4f46e5;
-                        }
-                        input:checked ~ .block {
-                            background-color: #a5b4fc;
-                        }
-                    `}</style>
                         </div>
 
-                        <div className={`mt-6 space-y-6 transition-opacity ${localControls.isEnabled ? 'opacity-100' : 'opacity-50 pointer-events-none'}`}>
+                        {/* Controls Content */}
+                        <div className={`mt-8 space-y-8 transition-all duration-300 ${localControls.isEnabled ? 'opacity-100 translate-y-0' : 'opacity-50 translate-y-2 pointer-events-none grayscale'}`}>
+
+                            {/* Time Limit Slider */}
                             <div>
-                                <h3 className="text-lg font-semibold">Daily Time Limit</h3>
-                                <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">Set the maximum total watch time per day.</p>
-                                <div className="flex items-center space-x-4">
-                                    <input
-                                        type="range"
-                                        min="15"
-                                        max="240"
-                                        step="15"
-                                        name="dailyTimeLimit"
-                                        value={localControls.dailyTimeLimit}
-                                        onChange={handleInputChange}
-                                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700"
-                                    />
-                                    <span className="font-bold text-indigo-600 dark:text-indigo-400 w-28 text-center">{localControls.dailyTimeLimit} minutes</span>
+                                <div className="flex justify-between items-end mb-4">
+                                    <div>
+                                        <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200">Daily Time Limit</h3>
+                                        <p className="text-sm text-gray-500 dark:text-gray-400">Maximum daily watch time.</p>
+                                    </div>
+                                    <span className="text-2xl font-bold text-indigo-600 dark:text-indigo-400 font-mono">
+                                        {localControls.dailyTimeLimit}<span className="text-sm text-gray-400 ml-1">min</span>
+                                    </span>
+                                </div>
+                                <input
+                                    type="range"
+                                    min="15"
+                                    max="240"
+                                    step="15"
+                                    name="dailyTimeLimit"
+                                    value={localControls.dailyTimeLimit}
+                                    onChange={handleInputChange}
+                                    className="w-full h-3 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 accent-indigo-600 hover:accent-indigo-500"
+                                />
+                                <div className="flex justify-between text-xs text-gray-400 mt-2 font-mono">
+                                    <span>15m</span>
+                                    <span>4h</span>
                                 </div>
                             </div>
 
+                            {/* Schedule Inputs */}
                             <div>
-                                <h3 className="text-lg font-semibold">Allowed Schedule</h3>
-                                <p className="text-sm text-gray-500 dark:text-gray-400 mb-3">Set the time window when videos can be watched.</p>
-                                <div className="flex items-center space-x-4">
-                                    <div className="flex-1">
-                                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">From</label>
+                                <h3 className="text-lg font-semibold mb-1 text-gray-800 dark:text-gray-200">Allowed Schedule</h3>
+                                <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">When can they watch?</p>
+                                <div className="flex items-center gap-4">
+                                    <div className="flex-1 bg-gray-50 dark:bg-gray-800/50 p-3 rounded-xl border border-gray-200 dark:border-gray-700">
+                                        <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">Start Time</label>
                                         <input
                                             type="time"
                                             name="start"
                                             value={localControls.schedule.start}
                                             onChange={handleScheduleChange}
-                                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
+                                            className="w-full bg-transparent font-mono text-lg font-bold text-gray-800 dark:text-white focus:outline-none"
                                         />
                                     </div>
-                                    <div className="flex-1">
-                                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">To</label>
+                                    <div className="text-gray-400">to</div>
+                                    <div className="flex-1 bg-gray-50 dark:bg-gray-800/50 p-3 rounded-xl border border-gray-200 dark:border-gray-700">
+                                        <label className="block text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-1">End Time</label>
                                         <input
                                             type="time"
                                             name="end"
                                             value={localControls.schedule.end}
                                             onChange={handleScheduleChange}
-                                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-700 dark:border-gray-600"
+                                            className="w-full bg-transparent font-mono text-lg font-bold text-gray-800 dark:text-white focus:outline-none"
                                         />
                                     </div>
                                 </div>
                             </div>
                         </div>
 
-                        <div className="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700 flex justify-end">
+                        <div className="mt-10 pt-6 border-t border-gray-200 dark:border-gray-700 flex justify-end">
                             <button
                                 onClick={handleSaveChanges}
-                                className="bg-indigo-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-indigo-700 transition"
+                                className={`
+                                    bg-indigo-600 text-white font-bold py-3 px-8 rounded-xl hover:bg-indigo-700 transition-all transform hover:scale-105 shadow-lg shadow-indigo-500/30
+                                    ${saved ? 'bg-green-500 hover:bg-green-600 ring-2 ring-green-300' : ''}
+                                `}
                                 title="Save parental control settings"
                             >
-                                {saved ? 'Saved!' : 'Save Changes'}
+                                {saved ? (
+                                    <span className="flex items-center gap-2">Saved! ✨</span>
+                                ) : 'Save Changes'}
                             </button>
                         </div>
                     </div>
                 </div>
             )}
-
-            {/* Modals for Family Management */}
-            {(showAddChildModal || showAddParentModal) && (
-                <Modal onClose={() => { setShowAddChildModal(false); setShowAddParentModal(false); setNewMemberName(''); }} title={showAddChildModal ? 'Add a Child' : 'Add a Parent'}>
-                    <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">{showAddChildModal ? "Create an invitation PIN for a new child to join the family." : "Add a new parent or guardian to the family."}</p>
-                    <input type="text" value={newMemberName} onChange={e => setNewMemberName(e.target.value)} placeholder="Enter name" className="w-full p-3 bg-gray-100 dark:bg-gray-700 rounded-lg border-2 border-transparent focus:border-indigo-500 focus:outline-none transition mb-4" />
-                    <button onClick={() => handleAddMemberSubmit(showAddChildModal ? 'child' : 'parent')} className="w-full p-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition" title={showAddChildModal ? 'Create Invitation PIN' : 'Add Parent to Family'}>
-                        {showAddChildModal ? 'Create Invitation' : 'Add Parent'}
-                    </button>
-                </Modal>
-            )}
-
-            {newlyAddedChild && (
-                <Modal onClose={() => setNewlyAddedChild(null)} title="Invitation Created!">
-                    <div className="text-center">
-                        <p className="text-gray-600 dark:text-gray-400 mb-4">Share this PIN with <span className="font-bold">{newlyAddedChild.name}</span> so they can join the family.</p>
-                        <div className="bg-gray-100 dark:bg-gray-700 p-4 rounded-lg">
-                            <p className="text-3xl font-bold tracking-[.2em] text-indigo-600 dark:text-indigo-400">{newlyAddedChild.joinPin}</p>
-                        </div>
-                        <button onClick={() => setNewlyAddedChild(null)} className="mt-6 w-full p-3 bg-gray-600 text-white font-bold rounded-lg hover:bg-gray-700 transition" title="Close">Done</button>
-                    </div>
-                </Modal>
-            )}
-
-            {editingUser && (
-                <Modal onClose={() => { setEditingUser(null); setNewMemberName(''); }} title={`Edit ${editingUser.name}`}>
-                    <input type="text" value={newMemberName} onChange={e => setNewMemberName(e.target.value)} placeholder="Enter new name" className="w-full p-3 bg-gray-100 dark:bg-gray-700 rounded-lg border-2 border-transparent focus:border-indigo-500 focus:outline-none transition mb-4" />
-                    <button onClick={handleEditUserSubmit} className="w-full p-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 transition" title="Save new name">Save Name</button>
-                </Modal>
-            )}
-
-            {removingUser && (
-                <Modal onClose={() => setRemovingUser(null)} title={`Remove ${removingUser.name}?`}>
-                    <p className="text-gray-600 dark:text-gray-400 mb-6">Are you sure? This will remove them from the family and cannot be undone.</p>
-                    <div className="flex space-x-4">
-                        <button onClick={() => setRemovingUser(null)} className="flex-1 p-3 bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-white font-semibold rounded-lg hover:bg-gray-300 dark:hover:bg-gray-500 transition" title="Cancel">Cancel</button>
-                        <button onClick={handleRemoveUserConfirm} className="flex-1 p-3 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 transition" title="Confirm removal">Remove</button>
-                    </div>
-                </Modal>
-            )}
-
         </div>
     );
 };

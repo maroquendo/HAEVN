@@ -14,8 +14,8 @@ import SkeletonLoader from './components/SkeletonLoader';
 import LoginView from './components/LoginView';
 import RegisterView from './components/RegisterView';
 import ChildLoginView from './components/ChildLoginView';
-import { CloseIcon, KeyIcon, TrashIcon } from './components/icons';
-import { MOCK_FAMILIES } from './constants';
+import FamilyView from './components/FamilyView';
+import { CloseIcon, KeyIcon, TrashIcon } from './components/icons'; import { MOCK_FAMILIES } from './constants';
 import { Video, Subscription, Wish, ParentalControls, AppData, Family, User } from './types';
 import { getRecommendedVideosForWish } from './services/geminiService';
 import { showLocalNotification } from './services/notificationService';
@@ -32,7 +32,10 @@ import {
   joinFamily,
   updateMember,
   removeMember,
-  verifyChildPin
+  verifyChildPin,
+  resetChildPin,
+  suspendChild,
+  unsuspendChild
 } from './services/firestore';
 
 
@@ -73,7 +76,7 @@ const App: React.FC = () => {
   const [lastResetDate, setLastResetDate] = useState(new Date().toDateString());
 
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
-  const [currentView, setCurrentView] = useState<'home' | 'history' | 'subscriptions' | 'wishlist' | 'settings'>('home');
+  const [currentView, setCurrentView] = useState<'home' | 'history' | 'subscriptions' | 'wishlist' | 'settings' | 'family'>('home');
   const [isAddVideoOpen, setIsAddVideoOpen] = useState(false);
   const [isAddSubOpen, setIsAddSubOpen] = useState(false);
   const [videoFormData, setVideoFormData] = useState<{ url: string, title: string } | undefined>(undefined);

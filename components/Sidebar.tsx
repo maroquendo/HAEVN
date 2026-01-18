@@ -1,11 +1,11 @@
 import React from 'react';
-import { HomeIcon, HistoryIcon, SubscriptionsIcon, WishlistIcon, SettingsIcon } from './icons';
+import { HomeIcon, HistoryIcon, SubscriptionsIcon, WishlistIcon, SettingsIcon, UserIcon } from './icons';
 import { ParentalControls } from '../types';
 import ScreenTimeTracker from './ScreenTimeTracker';
 import { motion } from 'framer-motion';
 import clsx from 'clsx';
 
-type View = 'home' | 'history' | 'subscriptions' | 'wishlist' | 'settings';
+type View = 'home' | 'history' | 'subscriptions' | 'wishlist' | 'settings' | 'family';
 
 interface SidebarProps {
   currentView: View;
@@ -22,6 +22,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentView, onViewChange, pendingWis
     { id: 'history', icon: HistoryIcon, label: 'History', notificationCount: 0, parentOnly: false },
     { id: 'subscriptions', icon: SubscriptionsIcon, label: 'Subscriptions', notificationCount: 0, parentOnly: false },
     { id: 'wishlist', icon: WishlistIcon, label: 'Wishlist', notificationCount: pendingWishesCount, parentOnly: false },
+    { id: 'family', icon: UserIcon, label: 'Family', notificationCount: 0, parentOnly: true },
     { id: 'settings', icon: SettingsIcon, label: 'Settings', notificationCount: 0, parentOnly: true },
   ];
 
