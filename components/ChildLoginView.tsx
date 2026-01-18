@@ -38,7 +38,46 @@ const ChildLoginView: React.FC<ChildLoginViewProps> = ({ onLoginSuccess, onBackT
         }
     }, [pin]);
 
+    // Rate limiting state
+    const [isLocked, setIsLocked] = useState(false);
+    const [lockoutTimer, setLockoutTimer] = useState(0);
+
+    useEffect(() => {
+        // Check for existing lockout
+        const lockoutEnd = localStorage.getItem('haevn_lockout_end');
+        if (lockoutEnd) {
+            const timeLeft = Math.ceil((parseInt(lockoutEnd) - Date.now()) / 1000);
+            if (timeLeft > 0) {
+                setIsLocked(true);
+                setLockoutTimer(timeLeft);
+            } else {
+                localStorage.removeItem('haevn_lockout_end');
+                localStorage.removeItem('haevn_failed_attempts');
+            }
+        }
+    }, []);
+
+    useEffect(() => {
+        let interval: NodeJS.Timeout;
+        if (isLocked && lockoutTimer > 0) {
+            interval = setInterval(() => {
+                setLockoutTimer((prev) => {
+                    if (prev <= 1) {
+                        setIsLocked(false);
+                        localStorage.removeItem('haevn_lockout_end');
+                        localStorage.removeItem('haevn_failed_attempts');
+                        return 0;
+                    }
+                    return prev - 1;
+                });
+            }, 1000);
+        }
+        return () => clearInterval(interval);
+    }, [isLocked, lockoutTimer]);
+
     const handleVerify = async () => {
+        if (isLocked) return;
+
         if (pin.length !== 6) {
             setError('Please enter your 6-digit PIN');
             return;
@@ -48,13 +87,33 @@ const ChildLoginView: React.FC<ChildLoginViewProps> = ({ onLoginSuccess, onBackT
         setError('');
 
         try {
+            // Artificial delay to slow down scripts
+            await new Promise(resolve => setTimeout(resolve, 800));
+
             const result = await verifyPin(pin);
             if (result) {
+                // Success: Clear any failure records
+                localStorage.removeItem('haevn_failed_attempts');
+                localStorage.removeItem('haevn_lockout_end');
                 onLoginSuccess(result.user, result.familyId);
             } else {
+                // Failure: Record attempt
+                const attempts = parseInt(localStorage.getItem('haevn_failed_attempts') || '0') + 1;
+                localStorage.setItem('haevn_failed_attempts', attempts.toString());
+
                 setShake(true);
                 setTimeout(() => setShake(false), 500);
-                setError('Invalid PIN. Please try again.');
+
+                if (attempts >= 5) {
+                    const lockoutDuration = 5 * 60; // 5 minutes
+                    const lockoutEnd = Date.now() + (lockoutDuration * 1000);
+                    localStorage.setItem('haevn_lockout_end', lockoutEnd.toString());
+                    setIsLocked(true);
+                    setLockoutTimer(lockoutDuration);
+                    setError('Too many failed attempts. Try again in 5 minutes.');
+                } else {
+                    setError(`Invalid PIN. ${5 - attempts} attempts remaining.`);
+                }
                 setPin('');
             }
         } catch (err) {
@@ -103,8 +162,9 @@ const ChildLoginView: React.FC<ChildLoginViewProps> = ({ onLoginSuccess, onBackT
 
                     {/* Error Message */}
                     {error && (
-                        <div className="mb-4 p-3 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-xl text-sm text-center">
+                        <div className="mb-4 p-3 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-xl text-sm text-center font-medium animate-pulse">
                             {error}
+                            {isLocked && <div className="text-xl font-bold mt-1">{Math.floor(lockoutTimer / 60)}:{(lockoutTimer % 60).toString().padStart(2, '0')}</div>}
                         </div>
                     )}
 
@@ -116,13 +176,13 @@ const ChildLoginView: React.FC<ChildLoginViewProps> = ({ onLoginSuccess, onBackT
                     )}
 
                     {/* Number Pad */}
-                    <div className="grid grid-cols-3 gap-3 mb-4">
+                    <div className={`grid grid-cols-3 gap-3 mb-4 ${isLocked ? 'opacity-50 pointer-events-none' : ''}`}>
                         {digits.map((digit, index) => (
                             digit !== '' ? (
                                 <button
                                     key={index}
                                     onClick={() => handleDigitClick(digit)}
-                                    disabled={isLoading}
+                                    disabled={isLoading || isLocked}
                                     className="h-16 text-3xl font-bold bg-gradient-to-br from-indigo-100 to-purple-100 dark:from-gray-700 dark:to-gray-600 text-gray-800 dark:text-white rounded-2xl hover:scale-105 hover:shadow-lg active:scale-95 transition-all duration-150 disabled:opacity-50"
                                 >
                                     {digit}
@@ -137,7 +197,7 @@ const ChildLoginView: React.FC<ChildLoginViewProps> = ({ onLoginSuccess, onBackT
                     <div className="flex space-x-3">
                         <button
                             onClick={handleClear}
-                            disabled={isLoading || pin.length === 0}
+                            disabled={isLoading || isLocked || pin.length === 0}
                             className="flex-1 py-3 text-sm font-semibold bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 rounded-xl hover:bg-gray-300 dark:hover:bg-gray-600 transition-all disabled:opacity-50"
                         >
                             Clear

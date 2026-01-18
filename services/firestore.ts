@@ -60,7 +60,7 @@ export const inviteMember = async (familyId: string, email: string, role: 'paren
         role,
         status: 'pending',
         email,
-        joinPin: role === 'child' ? String(Math.floor(100000 + Math.random() * 900000)) : undefined,
+        joinPin: role === 'child' ? await generateUniqueChildPin() : undefined,
     };
 
     const updatedMembers = [...family.members, newMember];
@@ -175,10 +175,26 @@ export const verifyChildPin = async (pin: string): Promise<{ user: User; familyI
 };
 
 /**
+ * Helper to generate a unique 6-digit PIN
+ */
+const generateUniqueChildPin = async (): Promise<string> => {
+    let pin = '';
+    let isUnique = false;
+    while (!isUnique) {
+        pin = String(Math.floor(100000 + Math.random() * 900000));
+        const existing = await verifyChildPin(pin);
+        if (!existing) {
+            isUnique = true;
+        }
+    }
+    return pin;
+};
+
+/**
  * Reset a child's PIN to a new random 6-digit code
  */
 export const resetChildPin = async (familyId: string, childId: string): Promise<string> => {
-    const newPin = String(Math.floor(100000 + Math.random() * 900000));
+    const newPin = await generateUniqueChildPin();
 
     const familyRef = doc(db, FAMILIES_COLLECTION, familyId);
     const familySnap = await getDoc(familyRef);
