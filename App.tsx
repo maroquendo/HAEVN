@@ -49,7 +49,20 @@ const App: React.FC = () => {
   // Auth view state (for switching between login screens)
   const [authView, setAuthView] = useState<AuthView>('login');
   // Child session state (for PIN-based child login without Firebase auth)
-  const [childSession, setChildSession] = useState<{ user: User; familyId: string } | null>(null);
+  // Initialize from localStorage if available
+  const [childSession, setChildSession] = useState<{ user: User; familyId: string } | null>(() => {
+    const saved = localStorage.getItem('haevn_child_session');
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  // Persist child session to localStorage
+  useEffect(() => {
+    if (childSession) {
+      localStorage.setItem('haevn_child_session', JSON.stringify(childSession));
+    } else {
+      localStorage.removeItem('haevn_child_session');
+    }
+  }, [childSession]);
 
   // App data states
   const [videos, setVideos] = useState<Video[]>([]);
@@ -103,6 +116,33 @@ const App: React.FC = () => {
       unsubscribe();
     };
   }, []);
+
+  // Magic Link Handler
+  useEffect(() => {
+    const handleMagicLink = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const pin = params.get('child_pin');
+
+      if (pin && !childSession && !currentUser) {
+        console.log('Detected Magic Link PIN. Verifying...');
+        try {
+          const result = await verifyChildPin(pin);
+          if (result) {
+            console.log('Magic Link Success! Logging in as:', result.user.name);
+            setChildSession(result);
+            setAuthView('child-login'); // Will switch to dashboard automatically due to childSession
+
+            // Clean URL
+            const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+            window.history.replaceState({ path: newUrl }, '', newUrl);
+          }
+        } catch (err) {
+          console.error('Invalid Magic Link:', err);
+        }
+      }
+    };
+    handleMagicLink();
+  }, [childSession, currentUser]);
 
   // Fetch/Create Family Effect - with timeout to prevent hanging
   useEffect(() => {

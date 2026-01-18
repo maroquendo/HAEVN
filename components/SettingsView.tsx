@@ -209,9 +209,22 @@ const SettingsView: React.FC<SettingsViewProps> = ({ controls, onUpdateControls,
                                         </div>
                                     </div>
                                     {member.status === 'pending' && member.joinPin && (
-                                        <div className="text-sm text-gray-600 dark:text-gray-300 flex items-center bg-white dark:bg-gray-800 px-3 py-1 rounded-md">
-                                            <KeyIcon className="w-4 h-4 mr-2" />
-                                            PIN: <span className="font-bold ml-1 tracking-wider">{member.joinPin}</span>
+                                        <div className="flex items-center space-x-2">
+                                            <div className="text-sm text-gray-600 dark:text-gray-300 flex items-center bg-white dark:bg-gray-800 px-3 py-1 rounded-md">
+                                                <KeyIcon className="w-4 h-4 mr-2" />
+                                                PIN: <span className="font-bold ml-1 tracking-wider">{member.joinPin}</span>
+                                            </div>
+                                            <button
+                                                onClick={() => {
+                                                    const url = `${window.location.origin}?child_pin=${member.joinPin}`;
+                                                    navigator.clipboard.writeText(url);
+                                                    alert(`Magic Link copied for ${member.name}!`);
+                                                }}
+                                                className="bg-indigo-100 hover:bg-indigo-200 dark:bg-indigo-900/50 dark:hover:bg-indigo-900 text-indigo-700 dark:text-indigo-300 px-3 py-1 rounded-md text-xs font-bold transition-colors"
+                                                title="Copy a special link that logs them in automatically"
+                                            >
+                                                Copy Link 🔗
+                                            </button>
                                         </div>
                                     )}
                                     <div className="relative ml-2" ref={menuRef}>
