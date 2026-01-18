@@ -5,6 +5,9 @@ export interface User {
   role: 'parent' | 'child';
   status: 'active' | 'pending';
   joinPin?: string;
+  email?: string;
+  suspended?: boolean; // If true, child cannot login
+  lastActive?: Date; // Track when user was last active
 }
 
 export enum ReactionType {
@@ -26,8 +29,10 @@ export interface ChatMessage {
   isLoading?: boolean;
 }
 
+export type VideoPlatform = 'youtube' | 'instagram' | 'tiktok' | 'twitter' | 'facebook' | 'unknown';
+
 export interface Video {
-  id:string;
+  id: string;
   url: string;
   title: string;
   summary: string;
@@ -36,6 +41,9 @@ export interface Video {
   status: 'unseen' | 'seen';
   watchDuration: number; // in seconds
   totalDuration: number; // in seconds, mocked
+  platform: VideoPlatform; // Platform the video is from
+  embedUrl?: string; // Pre-computed safe embed URL
+  thumbnailUrl?: string; // Platform-specific thumbnail
   reactions: {
     [ReactionType.LOVE]: number;
     [ReactionType.DISLIKE]: number;
@@ -79,8 +87,10 @@ export interface ParentalControls {
 export interface Family {
   id: string;
   name: string;
-  avatarUrl: string;
   members: User[];
+  pin: string; // Parent PIN for settings
+  avatarUrl: string;
+  ownerId: string; // ID of the parent who created the family
 }
 
 export interface AppData {

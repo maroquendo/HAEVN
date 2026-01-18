@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Video, Comment, ReactionType, User, ChatMessage } from '../types';
-import { LoveIcon, DislikeIcon, SendIcon, CloseIcon, ChatIcon, RobotIcon, InfoIcon, TrashIcon } from './icons';
+import { Video, Comment, ReactionType, User, ChatMessage, VideoPlatform } from '../types';
+import { LoveIcon, DislikeIcon, SendIcon, CloseIcon, RobotIcon, InfoIcon, TrashIcon } from './icons';
 import { getVideoChatResponse, AI_UNSURE_RESPONSE } from '../services/geminiService';
+import clsx from 'clsx';
+import { motion } from 'framer-motion';
 
 declare global {
-    interface Window {
-        onYouTubeIframeAPIReady: () => void;
-        YT: any;
-    }
+  interface Window {
+    onYouTubeIframeAPIReady: () => void;
+    YT: any;
+  }
 }
 
 interface VideoPlayerViewProps {
@@ -20,26 +22,37 @@ interface VideoPlayerViewProps {
   onDeleteVideo: (videoId: string) => void;
 }
 
-type PlayerMode = 'youtube' | 'loading_fallback' | 'fallback_video' | 'fallback_iframe' | 'error';
+type PlayerMode = 'youtube' | 'instagram' | 'tiktok' | 'twitter' | 'facebook' | 'loading_fallback' | 'fallback_video' | 'fallback_iframe' | 'error';
 
 // Helper function to shuffle an array
 const shuffleArray = <T,>(array: T[]): T[] => {
-    const newArray = [...array];
-    for (let i = newArray.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
-    }
-    return newArray;
+  const newArray = [...array];
+  for (let i = newArray.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+  }
+  return newArray;
 };
 
 
 const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpdateVideo, onTimeUpdate, onAiHelpRequest, currentUser, onDeleteVideo }) => {
   const [newComment, setNewComment] = useState('');
   const [localVideo, setLocalVideo] = useState<Video>(video);
-  const [playerMode, setPlayerMode] = useState<PlayerMode>('youtube');
+
+  // Determine initial player mode based on platform
+  const getInitialPlayerMode = (): PlayerMode => {
+    const platform = video.platform || 'youtube';
+    if (platform === 'instagram') return 'instagram';
+    if (platform === 'tiktok') return 'tiktok';
+    if (platform === 'twitter') return 'twitter';
+    if (platform === 'facebook') return 'facebook';
+    return 'youtube';
+  };
+
+  const [playerMode, setPlayerMode] = useState<PlayerMode>(getInitialPlayerMode());
   const [fallbackStreamUrl, setFallbackStreamUrl] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  
+
   const commentsEndRef = useRef<null | HTMLDivElement>(null);
   const chatEndRef = useRef<null | HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
@@ -49,204 +62,219 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
   const [chatInput, setChatInput] = useState('');
   const [isAiThinking, setIsAiThinking] = useState(false);
 
+  // Child users should not see comments - only AI chat
+  const isChild = currentUser.role === 'child';
+
   const startWatchTimer = () => {
     if (watchIntervalRef.current) clearInterval(watchIntervalRef.current);
     watchIntervalRef.current = window.setInterval(() => {
-        onTimeUpdate(1);
-        setLocalVideo(prev => {
-            const newDuration = prev.watchDuration < prev.totalDuration ? prev.watchDuration + 1 : prev.watchDuration;
-            const updated = { ...prev, watchDuration: newDuration };
-            onUpdateVideo(updated);
-            return updated;
-        });
+      onTimeUpdate(1);
+      setLocalVideo(prev => {
+        const newDuration = prev.watchDuration < prev.totalDuration ? prev.watchDuration + 1 : prev.watchDuration;
+        const updated = { ...prev, watchDuration: newDuration };
+        onUpdateVideo(updated);
+        return updated;
+      });
     }, 1000);
   };
 
   const stopWatchTimer = () => {
     if (watchIntervalRef.current) {
-        clearInterval(watchIntervalRef.current);
-        watchIntervalRef.current = null;
+      clearInterval(watchIntervalRef.current);
+      watchIntervalRef.current = null;
     }
   };
 
   const PIPED_INSTANCES = [
     'https://pipedapi.kavin.rocks',
-    'https://pipedapi.smnz.de',
-    'https://pipedapi.adminforge.de',
-    'https://pipedapi.aeong.one',
-    'https://piped-api.lunar.icu',
-    'https://pipedapi.ggxt.dev',
-    'https://pipedapi.simpleprivacy.fr',
     'https://pipedapi.drgns.space',
-    'https://piped-api.garudalinux.org',
     'https://pipedapi.privacydev.net',
-    'https://pipedapi.moomoo.me',
-    'https://api-piped.mha.fi',
-    'https://pipedapi.leptons.xyz',
-    'https://pipedapi.frontend.social',
   ];
 
   const INVIDIOUS_INSTANCES = [
     'https://vid.puffyan.us',
-    'https://invidious.lunar.icu',
     'https://iv.ggtyler.dev',
     'https://inv.odyssey346.dev',
-    'https://invidious.nerdvpn.de',
-    'https://invidious.protokolla.fi',
-    'https://iv.datura.network',
-    'https://invidious.projectsegfau.lt',
-    'https://invidious.slipfox.xyz',
-    'https://invidious.kavin.rocks',
-    'https://invidious.io.lol',
-    'https://inv.vern.cc',
-    'https://invidious.private.coffee',
-    'https://iv.melmac.space',
   ];
+
+  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeout = 2000) => {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal
+      });
+      clearTimeout(id);
+      return response;
+    } catch (error) {
+      clearTimeout(id);
+      throw error;
+    }
+  };
 
   const fetchAndPlayFallback = async () => {
     let lastError: Error | null = null;
-  
+
+    console.log("Starting fallback process...");
+
     // --- Tier 1: Try Piped Instances (direct video stream) ---
     console.log("Fallback Tier 1: Attempting Piped instances...");
     const shuffledPiped = shuffleArray(PIPED_INSTANCES);
     for (const instance of shuffledPiped) {
-        try {
-            const apiUrl = `${instance}/streams/${video.id}`;
-            const response = await fetch(apiUrl);
-            if (!response.ok) {
-                lastError = new Error(`Piped service at ${instance} responded with status ${response.status}`);
-                continue;
-            }
-            const data = await response.json();
-            const videoStream = data.videoStreams?.find((s: any) => s.quality === '720p' && s.format === 'WEBM') || data.videoStreams?.[0];
-            if (videoStream && videoStream.url) {
-                const streamUrl = new URL(videoStream.url, instance).toString();
-                console.log(`Success with Piped instance: ${instance}`);
-                setFallbackStreamUrl(streamUrl);
-                setPlayerMode('fallback_video');
-                return; // Success!
-            }
-        } catch (err) {
-            console.warn(`Error with Piped instance ${instance}:`, err);
-            lastError = err as Error;
+      if (playerMode !== 'loading_fallback') return;
+
+      try {
+        const apiUrl = `${instance}/streams/${video.id}`;
+        const response = await fetchWithTimeout(apiUrl);
+        if (!response.ok) {
+          lastError = new Error(`Piped service at ${instance} responded with status ${response.status}`);
+          continue;
         }
+        const data = await response.json();
+        const videoStream = data.videoStreams?.find((s: any) => s.quality === '720p' && s.format === 'WEBM') || data.videoStreams?.[0];
+        if (videoStream && videoStream.url) {
+          const streamUrl = new URL(videoStream.url, instance).toString();
+          console.log(`Success with Piped instance: ${instance}`);
+          setFallbackStreamUrl(streamUrl);
+          setPlayerMode('fallback_video');
+          return; // Success!
+        }
+      } catch (err) {
+        console.warn(`Error with Piped instance ${instance}:`, err);
+        lastError = err as Error;
+      }
     }
 
     // --- Tier 2: Try Invidious API (direct video stream) ---
     console.log("Fallback Tier 2: Piped failed, attempting Invidious API...");
     const shuffledInvidious = shuffleArray(INVIDIOUS_INSTANCES);
     for (const instance of shuffledInvidious) {
-        try {
-            const apiUrl = `${instance}/api/v1/videos/${video.id}`;
-            const response = await fetch(apiUrl);
-            if (!response.ok) {
-                lastError = new Error(`Invidious API at ${instance} responded with status ${response.status}`);
-                continue;
-            }
-            const data = await response.json();
-            // Find a 720p mp4 stream, or fallback to any
-            const stream = data.formatStreams?.find((s: any) => s.qualityLabel === '720p' && s.container === 'mp4') || data.formatStreams?.[0];
-            if (stream && stream.url) {
-                console.log(`Success with Invidious API instance: ${instance}`);
-                setFallbackStreamUrl(stream.url); // URL is absolute
-                setPlayerMode('fallback_video');
-                return; // Success!
-            }
-        } catch (err) {
-            console.warn(`Error with Invidious API instance ${instance}:`, err);
-            lastError = err as Error;
+      if (playerMode !== 'loading_fallback') return;
+
+      try {
+        const apiUrl = `${instance}/api/v1/videos/${video.id}`;
+        const response = await fetchWithTimeout(apiUrl);
+        if (!response.ok) {
+          lastError = new Error(`Invidious API at ${instance} responded with status ${response.status}`);
+          continue;
         }
+        const data = await response.json();
+        // Find a 720p mp4 stream, or fallback to any
+        const stream = data.formatStreams?.find((s: any) => s.qualityLabel === '720p' && s.container === 'mp4') || data.formatStreams?.[0];
+        if (stream && stream.url) {
+          console.log(`Success with Invidious API instance: ${instance}`);
+          setFallbackStreamUrl(stream.url); // URL is absolute
+          setPlayerMode('fallback_video');
+          return; // Success!
+        }
+      } catch (err) {
+        console.warn(`Error with Invidious API instance ${instance}:`, err);
+        lastError = err as Error;
+      }
     }
-  
+
     // --- Tier 3: Try Invidious Instances (iframe embed) ---
     console.log("Fallback Tier 3: All fetch attempts failed, trying Invidious iframe embed...");
     if (shuffledInvidious.length > 0) {
-        const instance = shuffledInvidious[0];
-        const embedUrl = `${instance}/embed/${video.id}?autoplay=1`;
-        console.log(`Using Invidious embed fallback: ${embedUrl}`);
-        setFallbackStreamUrl(embedUrl);
-        setPlayerMode('fallback_iframe');
-        return; // Set the iframe and hope for the best.
+      const instance = shuffledInvidious[0];
+      const embedUrl = `${instance}/embed/${video.id}?autoplay=1`;
+      console.log(`Using Invidious embed fallback: ${embedUrl}`);
+      setFallbackStreamUrl(embedUrl);
+      setPlayerMode('fallback_iframe');
+      return; // Set the iframe and hope for the best.
     }
-  
+
     // If all tiers fail
-    console.error("All fallback attempts failed:", lastError);
-    const errorMessage = lastError?.message ? `All fallback attempts failed:\n${lastError.message}` : "Even my best tricks didn't work for this video. So sorry!";
-    setErrorMessage(errorMessage);
+    setErrorMessage("Unable to play video from any source.");
     setPlayerMode('error');
   };
 
+  // YouTube Player Initialization
   useEffect(() => {
-    if (localVideo.status === 'unseen') {
-      const updated = { ...localVideo, status: 'seen' as 'seen' };
-      setLocalVideo(updated);
-      onUpdateVideo(updated);
-    }
-    
-    if (playerMode !== 'youtube') {
-      return;
-    }
+    if (playerMode !== 'youtube') return;
 
-    const onPlayerReady = (event: any) => {};
+    let isMounted = true;
+
+    const onPlayerReady = (event: any) => {
+      if (isMounted) event.target.playVideo();
+    };
 
     const onPlayerStateChange = (event: any) => {
-        if (event.data === window.YT.PlayerState.PLAYING) {
-            startWatchTimer();
-        } else {
-            stopWatchTimer();
-        }
-    };
-    
-    const onPlayerError = (event: any) => {
-      stopWatchTimer();
-      console.error("YouTube Player Error Code:", event.data);
-
-      if (playerRef.current && playerRef.current.destroy) {
-          playerRef.current.destroy();
-          playerRef.current = null;
+      if (!window.YT) return;
+      if (event.data === window.YT.PlayerState.PLAYING) {
+        startWatchTimer();
+      } else {
+        stopWatchTimer();
       }
-      setPlayerMode('loading_fallback');
-      fetchAndPlayFallback();
     };
 
-    const setupPlayer = () => {
-        if (document.getElementById('youtube-player-container')) {
-            playerRef.current = new window.YT.Player('youtube-player-container', {
-                videoId: video.id,
-                playerVars: { 'autoplay': 1, 'controls': 1, 'rel': 0, 'iv_load_policy': 3, 'modestbranding': 1, 'playsinline': 1, 'fs': 1, 'cc_load_policy': 1, 'origin': window.location.origin },
-                events: { 'onReady': onPlayerReady, 'onStateChange': onPlayerStateChange, 'onError': onPlayerError },
-            });
+    const onPlayerError = (event: any) => {
+      console.log("YouTube Player Error:", event.data);
+      if (isMounted) setPlayerMode('loading_fallback');
+    };
+
+    const loadPlayer = () => {
+      if (playerRef.current) return;
+      if (!document.getElementById('youtube-player-container')) return;
+
+      // Use youtube-nocookie.com for privacy-enhanced mode
+      playerRef.current = new window.YT.Player('youtube-player-container', {
+        videoId: video.id,
+        host: 'https://www.youtube-nocookie.com',
+        events: {
+          'onReady': onPlayerReady,
+          'onStateChange': onPlayerStateChange,
+          'onError': onPlayerError
+        },
+        playerVars: {
+          'autoplay': 1,
+          'controls': 1,
+          'rel': 0,  // Disable related videos from other channels
+          'modestbranding': 1,  // Minimal YouTube branding
+          'disablekb': isChild ? 1 : 0, // Disable keyboard controls for children
+          'fs': 1, // Allow fullscreen
+          'iv_load_policy': 3, // Disable video annotations
+          'showinfo': 0, // Don't show video title/uploader
+          'cc_load_policy': 0, // Don't load captions by default
+          'origin': window.location.origin, // For security
         }
+      });
     };
 
-    if (!window.YT || !window.YT.Player) {
-        window.onYouTubeIframeAPIReady = setupPlayer;
+    if (window.YT && window.YT.Player) {
+      loadPlayer();
     } else {
-        setupPlayer();
+      // Wait for API or global callback? 
+      // Assuming API is loaded in index.html. If not, we might need to load it.
+      // For now, if not present, try fallback immediately or wait a bit?
+      // Let's try fallback if not present after a timeout.
+      const timer = setTimeout(() => {
+        if (isMounted && (!window.YT || !window.YT.Player)) {
+          setPlayerMode('loading_fallback');
+        } else {
+          loadPlayer();
+        }
+      }, 1000);
+      return () => clearTimeout(timer);
     }
 
     return () => {
-        stopWatchTimer();
-        if (playerRef.current && playerRef.current.destroy) {
-            playerRef.current.destroy();
-            playerRef.current = null;
-        }
-        if(window.onYouTubeIframeAPIReady) {
-            window.onYouTubeIframeAPIReady = () => {};
-        }
+      isMounted = false;
+      stopWatchTimer();
+      if (playerRef.current && playerRef.current.destroy) {
+        playerRef.current.destroy();
+        playerRef.current = null;
+      }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [video.id, playerMode]);
+  }, [video.id, playerMode, isChild]);
 
+  // Fallback Trigger
   useEffect(() => {
-    if (playerMode === 'fallback_iframe') {
-      startWatchTimer();
+    if (playerMode === 'loading_fallback') {
+      fetchAndPlayFallback();
     }
   }, [playerMode]);
-
-  useEffect(() => {
-    commentsEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [localVideo.comments]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -300,7 +328,7 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
 
     const currentChatHistory = localVideo.chatHistory || [];
     const updatedHistory = [...currentChatHistory, userMessage, aiThinkingMessage];
-    
+
     const updatedVideo = { ...localVideo, chatHistory: updatedHistory };
     setLocalVideo(updatedVideo);
     onUpdateVideo(updatedVideo);
@@ -308,11 +336,11 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
     setIsAiThinking(true);
 
     const aiResponseText = await getVideoChatResponse(video.title, video.summary, currentChatHistory, question);
-    
+
     if (aiResponseText.trim() === AI_UNSURE_RESPONSE && currentUser.role === 'child') {
       onAiHelpRequest(video);
     }
-    
+
     const finalAiMessage: ChatMessage = { ...aiThinkingMessage, text: aiResponseText, isLoading: false };
     const finalHistory = [...currentChatHistory, userMessage, finalAiMessage];
     const finalVideoUpdate = { ...localVideo, chatHistory: finalHistory };
@@ -320,19 +348,106 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
     onUpdateVideo(finalVideoUpdate);
     setIsAiThinking(false);
   };
-  
+
   const handleDeleteClick = () => {
     onDeleteVideo(video.id);
   };
-  
+
+  // Get the safe embed URL for the platform
+  const getSafeEmbedUrl = (): string => {
+    if (video.embedUrl) return video.embedUrl;
+
+    const platform = video.platform || 'youtube';
+
+    switch (platform) {
+      case 'youtube':
+        // Privacy-enhanced YouTube embed with restricted parameters
+        return `https://www.youtube-nocookie.com/embed/${video.id}?rel=0&modestbranding=1&showinfo=0&autoplay=1&controls=1&iv_load_policy=3`;
+      case 'instagram':
+        return `https://www.instagram.com/p/${video.id}/embed/?hidecaption=1`;
+      case 'tiktok':
+        return `https://www.tiktok.com/embed/v2/${video.id}`;
+      case 'facebook':
+        return `https://www.facebook.com/plugins/video.php?href=${encodeURIComponent(video.url)}&show_text=false`;
+      default:
+        return '';
+    }
+  };
+
   const renderPlayer = () => {
     switch (playerMode) {
       case 'youtube':
         return <div id="youtube-player-container" className="w-full h-full"></div>;
+
+      case 'instagram':
+        return (
+          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400">
+            <iframe
+              src={getSafeEmbedUrl()}
+              className="w-full h-full max-w-[400px] max-h-[700px] border-0"
+              allow="autoplay; encrypted-media"
+              allowFullScreen
+              title="Instagram Video"
+              sandbox="allow-scripts allow-same-origin allow-presentation"
+              onLoad={() => startWatchTimer()}
+            />
+          </div>
+        );
+
+      case 'tiktok':
+        return (
+          <div className="w-full h-full flex items-center justify-center bg-black">
+            <iframe
+              src={getSafeEmbedUrl()}
+              className="w-full h-full max-w-[400px] border-0"
+              allow="autoplay; encrypted-media"
+              allowFullScreen
+              title="TikTok Video"
+              sandbox="allow-scripts allow-same-origin allow-presentation"
+              onLoad={() => startWatchTimer()}
+            />
+          </div>
+        );
+
+      case 'twitter':
+        return (
+          <div className="w-full h-full flex items-center justify-center bg-black">
+            <div className="text-center text-white">
+              <InfoIcon className="mx-auto h-12 w-12 text-blue-400 mb-4" />
+              <h3 className="text-xl font-medium mb-2">Twitter/X Video</h3>
+              <p className="text-gray-300 mb-4">This video can be viewed in the player below.</p>
+              <iframe
+                src={`https://platform.twitter.com/embed/Tweet.html?id=${video.id}`}
+                className="w-full max-w-[500px] h-[400px] border-0 mx-auto"
+                allow="autoplay; encrypted-media"
+                allowFullScreen
+                title="Twitter Video"
+                sandbox="allow-scripts allow-same-origin allow-presentation"
+                onLoad={() => startWatchTimer()}
+              />
+            </div>
+          </div>
+        );
+
+      case 'facebook':
+        return (
+          <div className="w-full h-full flex items-center justify-center bg-[#1877F2]">
+            <iframe
+              src={getSafeEmbedUrl()}
+              className="w-full h-full border-0"
+              allow="autoplay; encrypted-media; fullscreen"
+              allowFullScreen
+              title="Facebook Video"
+              sandbox="allow-scripts allow-same-origin allow-presentation"
+              onLoad={() => startWatchTimer()}
+            />
+          </div>
+        );
+
       case 'loading_fallback':
         return (
           <div className="p-6 text-center flex flex-col items-center justify-center h-full">
-            <svg className="animate-spin h-12 w-12 text-indigo-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <svg className="animate-spin h-12 w-12 text-brand-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
               <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
             </svg>
@@ -361,17 +476,19 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
             allowFullScreen
             className="w-full h-full border-0"
             title="Fallback Video Player"
+            sandbox="allow-scripts allow-same-origin allow-presentation"
           ></iframe>
         );
       case 'error':
       default:
         return (
           <div className="p-6 text-center flex flex-col items-center justify-center h-full">
-              <InfoIcon className="mx-auto h-12 w-12 text-yellow-400" />
-              <h3 className="mt-2 text-xl font-medium text-white">Playback Problem</h3>
-              <div className="mt-2 text-sm text-gray-300">
-                  <p>{errorMessage || "This video can't be played right now."}</p>
-              </div>
+            <InfoIcon className="mx-auto h-12 w-12 text-yellow-400" />
+            <h3 className="mt-2 text-xl font-medium text-white">Playback Problem</h3>
+            <div className="mt-2 text-sm text-gray-300">
+              <p>{errorMessage || "This video can't be played right now."}</p>
+              <p className="mt-2">Please try again later or contact support if the problem persists.</p>
+            </div>
           </div>
         );
     }
@@ -380,154 +497,205 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
   const watchPercentage = (localVideo.watchDuration / localVideo.totalDuration) * 100;
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-70 z-30 flex items-center justify-center p-4 animate-fade-in">
-      <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-4xl h-full max-h-[90vh] flex flex-col overflow-hidden">
-        <div className="flex justify-between items-center p-4 border-b border-gray-200 dark:border-gray-700">
-          <h2 className="text-xl font-bold text-gray-800 dark:text-white truncate">{video.title}</h2>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-800 dark:hover:text-white transition" title="Close video player">
-            <CloseIcon />
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-30 flex items-center justify-center p-4 animate-fade-in">
+      <div className="glass-panel rounded-3xl shadow-2xl w-full max-w-6xl h-full max-h-[90vh] flex flex-col overflow-hidden border border-white/10">
+        <div className="flex justify-between items-center p-5 border-b border-white/10 bg-white/5">
+          <h2 className="text-2xl font-bold text-gray-800 dark:text-white truncate">{video.title}</h2>
+          <button onClick={onClose} className="p-2 rounded-full hover:bg-white/10 text-gray-500 hover:text-gray-800 dark:hover:text-white transition" title="Close video player">
+            <CloseIcon className="w-6 h-6" />
           </button>
         </div>
 
-        <div className="flex-grow flex flex-col md:flex-row overflow-y-auto">
-          <div className="w-full md:w-2/3 p-4 flex flex-col">
-            <div className="aspect-video w-full rounded-lg overflow-hidden bg-black flex items-center justify-center text-white">
-                {renderPlayer()}
+        <div className="flex-grow flex flex-col lg:flex-row overflow-hidden">
+          {/* Video Section */}
+          <div className="w-full lg:w-2/3 p-6 flex flex-col overflow-y-auto custom-scrollbar">
+            <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black shadow-lg flex items-center justify-center text-white ring-1 ring-white/10">
+              {renderPlayer()}
             </div>
-             <div className="mt-4">
-                <div className="flex items-center mb-3">
-                    <img src={video.sender.avatarUrl} alt={video.sender.name} className="w-10 h-10 rounded-full mr-3" />
-                    <div>
-                        <p className="font-semibold text-gray-800 dark:text-gray-200">From {video.sender.name}</p>
-                    </div>
+            <div className="mt-6">
+              <div className="flex items-center mb-4">
+                <img src={video.sender.avatarUrl} alt={video.sender.name} className="w-12 h-12 rounded-full mr-4 border-2 border-brand-200" />
+                <div>
+                  <p className="font-bold text-lg text-gray-800 dark:text-gray-100">From {video.sender.name}</p>
                 </div>
-                <p className="text-gray-700 dark:text-gray-300 mt-2">{video.summary}</p>
-             </div>
-             <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-                <h4 className="font-semibold text-gray-800 dark:text-white mb-2">Your Reaction</h4>
-                <div className="flex space-x-4">
-                  <button 
-                    onClick={() => handleReaction(ReactionType.LOVE)}
-                    title="Love this video"
-                    className={`flex items-center space-x-2 transition px-4 py-2 rounded-full ${ localVideo.userReaction === ReactionType.LOVE ? 'text-pink-500 bg-pink-100 dark:bg-pink-900/50 font-semibold' : 'text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:text-pink-500 hover:bg-pink-50 dark:hover:bg-gray-600'}`}
-                  >
-                    <LoveIcon /> <span>Love it ({localVideo.reactions.love})</span>
-                  </button>
-                  <button 
-                    onClick={() => handleReaction(ReactionType.DISLIKE)}
-                    title="Dislike this video"
-                    className={`flex items-center space-x-2 transition px-4 py-2 rounded-full ${ localVideo.userReaction === ReactionType.DISLIKE ? 'text-blue-500 bg-blue-100 dark:bg-blue-900/50 font-semibold' : 'text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-gray-600'}`}
-                  >
-                    <DislikeIcon /> <span>Didn't like it ({localVideo.reactions.dislike})</span>
-                  </button>
-                </div>
-             </div>
-             <div className="mt-4">
-                 <h4 className="font-semibold text-gray-800 dark:text-white mb-1">Progress</h4>
-                 <div className="w-full bg-gray-200 dark:bg-gray-600 rounded-full h-2.5">
-                    <div className="bg-indigo-600 h-2.5 rounded-full" style={{ width: `${watchPercentage}%` }}></div>
-                 </div>
-                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Watched for {Math.floor(localVideo.watchDuration / 60)}m {localVideo.watchDuration % 60}s</p>
-             </div>
-              {currentUser.role === 'parent' && (
-                  <div className="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
-                      <h4 className="font-semibold text-gray-800 dark:text-white mb-2">Admin Actions</h4>
-                      <button 
-                          onClick={handleDeleteClick}
-                          title="Permanently delete this video"
-                          className="flex items-center space-x-2 transition px-4 py-2 rounded-full text-red-600 bg-red-100 dark:bg-red-900/50 font-semibold hover:bg-red-200 dark:hover:bg-red-900"
-                      >
-                          <TrashIcon className="w-5 h-5"/> <span>Delete Video</span>
-                      </button>
-                  </div>
-              )}
+              </div>
+              <p className="text-gray-700 dark:text-gray-300 text-lg leading-relaxed">{video.summary}</p>
+            </div>
+
+            <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700/50">
+              <h4 className="font-bold text-gray-800 dark:text-white mb-3">Your Reaction</h4>
+              <div className="flex space-x-4">
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => handleReaction(ReactionType.LOVE)}
+                  title="Love this video"
+                  className={clsx(
+                    "flex items-center space-x-2 transition px-6 py-3 rounded-full font-semibold shadow-sm",
+                    localVideo.userReaction === ReactionType.LOVE
+                      ? 'text-white bg-pink-500 shadow-pink-500/30'
+                      : 'text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-pink-100 dark:hover:bg-gray-700'
+                  )}
+                >
+                  <LoveIcon className="w-6 h-6" /> <span>Love it ({localVideo.reactions.love})</span>
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => handleReaction(ReactionType.DISLIKE)}
+                  title="Dislike this video"
+                  className={clsx(
+                    "flex items-center space-x-2 transition px-6 py-3 rounded-full font-semibold shadow-sm",
+                    localVideo.userReaction === ReactionType.DISLIKE
+                      ? 'text-white bg-blue-500 shadow-blue-500/30'
+                      : 'text-gray-600 dark:text-gray-300 bg-gray-100 dark:bg-gray-800 hover:bg-blue-100 dark:hover:bg-gray-700'
+                  )}
+                >
+                  <DislikeIcon className="w-6 h-6" /> <span>Didn't like it ({localVideo.reactions.dislike})</span>
+                </motion.button>
+              </div>
+            </div>
+
+            <div className="mt-6">
+              <div className="flex justify-between items-end mb-2">
+                <h4 className="font-bold text-gray-800 dark:text-white">Progress</h4>
+                <p className="text-sm font-medium text-gray-500 dark:text-gray-400">{Math.floor(localVideo.watchDuration / 60)}m {localVideo.watchDuration % 60}s watched</p>
+              </div>
+              <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 overflow-hidden">
+                <motion.div
+                  className="bg-brand-500 h-full rounded-full"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${watchPercentage}%` }}
+                  transition={{ type: "spring", stiffness: 50 }}
+                />
+              </div>
+            </div>
+
+            {currentUser.role === 'parent' && (
+              <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700/50">
+                <h4 className="font-bold text-gray-800 dark:text-white mb-3">Admin Actions</h4>
+                <button
+                  onClick={handleDeleteClick}
+                  title="Permanently delete this video"
+                  className="flex items-center space-x-2 transition px-5 py-2.5 rounded-xl text-red-600 bg-red-50 dark:bg-red-900/20 font-semibold hover:bg-red-100 dark:hover:bg-red-900/40 border border-red-200 dark:border-red-800"
+                >
+                  <TrashIcon className="w-5 h-5" /> <span>Delete Video</span>
+                </button>
+              </div>
+            )}
           </div>
 
-          <div className="w-full md:w-1/3 border-t md:border-t-0 md:border-l border-gray-200 dark:border-gray-700 flex flex-col h-full">
-            <div className="flex border-b border-gray-200 dark:border-gray-700">
-                <button 
-                  onClick={() => setActiveTab('chat')}
-                  title="Chat with Sparky the AI about the video"
-                  className={`flex-1 p-3 font-semibold text-sm transition-colors ${activeTab === 'chat' ? 'bg-indigo-50 dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-600'}`}
-                >
-                  AI Chat
-                </button>
-                <button 
+          {/* Sidebar Section (Chat/Comments) - HIDE COMMENTS FOR CHILDREN */}
+          <div className="w-full lg:w-1/3 border-t lg:border-t-0 lg:border-l border-gray-200 dark:border-gray-700/50 flex flex-col h-full bg-gray-50/50 dark:bg-black/20">
+            {/* Tab buttons - Only show Comments tab to parents */}
+            <div className="flex border-b border-gray-200 dark:border-gray-700/50 p-2">
+              <button
+                onClick={() => setActiveTab('chat')}
+                className={clsx(
+                  "flex-1 p-3 rounded-xl font-bold text-sm transition-all",
+                  activeTab === 'chat'
+                    ? 'bg-white dark:bg-gray-800 text-brand-600 dark:text-brand-400 shadow-sm'
+                    : 'text-gray-500 hover:bg-white/50 dark:hover:bg-white/5'
+                )}
+              >
+                AI Chat
+              </button>
+              {/* Only show Comments tab for parents */}
+              {!isChild && (
+                <button
                   onClick={() => setActiveTab('comments')}
-                  title="View and add comments"
-                  className={`flex-1 p-3 font-semibold text-sm transition-colors ${activeTab === 'comments' ? 'bg-indigo-50 dark:bg-gray-700 text-indigo-600 dark:text-indigo-400 border-b-2 border-indigo-500' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-600'}`}
+                  className={clsx(
+                    "flex-1 p-3 rounded-xl font-bold text-sm transition-all",
+                    activeTab === 'comments'
+                      ? 'bg-white dark:bg-gray-800 text-brand-600 dark:text-brand-400 shadow-sm'
+                      : 'text-gray-500 hover:bg-white/50 dark:hover:bg-white/5'
+                  )}
                 >
                   Comments
                 </button>
+              )}
             </div>
-            {activeTab === 'chat' && (
-              <>
-                <div className="flex-grow p-4 space-y-4 overflow-y-auto">
-                    {(localVideo.chatHistory || []).map(msg => (
-                      <div key={msg.id} className={`flex items-end space-x-2 ${msg.author === 'user' ? 'justify-end' : 'justify-start'}`}>
-                          {msg.author === 'ai' && <RobotIcon className="w-8 h-8 p-1.5 rounded-full bg-gray-200 dark:bg-gray-600 text-indigo-500 flex-shrink-0" />}
-                          <div className={`rounded-xl p-3 max-w-xs ${msg.author === 'user' ? 'bg-indigo-500 text-white' : 'bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200'}`}>
-                              {msg.isLoading ? (
-                                <div className="flex items-center space-x-1">
-                                  <span className="dot animate-bounce">.</span>
-                                  <span className="dot animate-bounce-delay-150">.</span>
-                                  <span className="dot animate-bounce-delay-300">.</span>
-                                </div>
-                              ) : (
-                                <p className="text-sm">{msg.text}</p>
-                              )}
+
+            <div className="flex-grow overflow-y-auto p-4 space-y-4 custom-scrollbar">
+              {activeTab === 'chat' ? (
+                <>
+                  {(localVideo.chatHistory || []).map(msg => (
+                    <motion.div
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      key={msg.id}
+                      className={`flex items-end space-x-2 ${msg.author === 'user' ? 'justify-end' : 'justify-start'}`}
+                    >
+                      {msg.author === 'ai' && <div className="w-8 h-8 rounded-full bg-brand-100 dark:bg-brand-900 flex items-center justify-center text-brand-600"><RobotIcon className="w-5 h-5" /></div>}
+                      <div className={clsx(
+                        "rounded-2xl p-4 max-w-[85%] shadow-sm",
+                        msg.author === 'user'
+                          ? 'bg-brand-500 text-white rounded-br-none'
+                          : 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-bl-none'
+                      )}>
+                        {msg.isLoading ? (
+                          <div className="flex items-center space-x-1">
+                            <span className="w-2 h-2 bg-current rounded-full animate-bounce" />
+                            <span className="w-2 h-2 bg-current rounded-full animate-bounce delay-75" />
+                            <span className="w-2 h-2 bg-current rounded-full animate-bounce delay-150" />
                           </div>
-                           {msg.author === 'user' && <img src={currentUser.avatarUrl} alt={currentUser.name} className="w-8 h-8 rounded-full flex-shrink-0" />}
+                        ) : (
+                          <p className="text-sm leading-relaxed">{msg.text}</p>
+                        )}
                       </div>
-                    ))}
-                    <div ref={chatEndRef} />
-                </div>
-                <div className="p-4 bg-gray-50 dark:bg-gray-700 border-t border-gray-200 dark:border-gray-600">
-                    <form onSubmit={handleSendChatMessage} className="flex items-center space-x-2">
-                        <input 
-                          type="text"
-                          value={chatInput}
-                          onChange={(e) => setChatInput(e.target.value)}
-                          placeholder="Ask Sparky a question..."
-                          className="w-full p-2 bg-gray-200 dark:bg-gray-600 rounded-lg border-2 border-transparent focus:border-indigo-500 focus:outline-none transition text-gray-800 dark:text-gray-200"
-                          disabled={isAiThinking}
-                        />
-                        <button type="submit" className="bg-indigo-600 text-white p-2 rounded-full hover:bg-indigo-700 transition disabled:bg-indigo-400" disabled={isAiThinking} title="Send message">
-                          <SendIcon className="w-5 h-5"/>
-                        </button>
-                    </form>
-                </div>
-              </>
-            )}
-            {activeTab === 'comments' && (
-              <>
-                <div className="flex-grow p-4 space-y-4 overflow-y-auto">
-                  {localVideo.comments.map(comment => (
-                    <div key={comment.id} className={`flex flex-col ${comment.author.id === currentUser.id ? 'items-end' : 'items-start'}`}>
-                      <div className={`rounded-xl p-3 max-w-xs ${comment.author.id === currentUser.id ? 'bg-indigo-500 text-white' : 'bg-gray-200 dark:bg-gray-600 text-gray-800 dark:text-gray-200'}`}>
-                        <p className="text-sm">{comment.text}</p>
-                      </div>
-                       <span className="text-xs text-gray-400 mt-1">{comment.author.name} at {comment.timestamp}</span>
-                    </div>
+                      {msg.author === 'user' && <img src={currentUser.avatarUrl} alt={currentUser.name} className="w-8 h-8 rounded-full shadow-sm" />}
+                    </motion.div>
                   ))}
-                  <div ref={commentsEndRef} />
-                </div>
-                <div className="p-4 bg-gray-50 dark:bg-gray-700 border-t border-gray-200 dark:border-gray-600">
-                  <form onSubmit={handleAddComment} className="flex items-center space-x-2">
-                    <input 
-                      type="text"
-                      value={newComment}
-                      onChange={(e) => setNewComment(e.target.value)}
-                      placeholder="Chat about the video..."
-                      className="w-full p-2 bg-gray-200 dark:bg-gray-600 rounded-lg border-2 border-transparent focus:border-indigo-500 focus:outline-none transition text-gray-800 dark:text-gray-200"
-                    />
-                    <button type="submit" className="bg-indigo-600 text-white p-2 rounded-full hover:bg-indigo-700 transition" disabled={currentUser.role === 'parent'} title="Send comment">
-                      <SendIcon className="w-5 h-5"/>
-                    </button>
-                  </form>
-                </div>
-              </>
-            )}
+                  <div ref={chatEndRef} />
+                </>
+              ) : (
+                // Only render Comments section for parents (additional safety check)
+                !isChild && (
+                  <>
+                    {localVideo.comments.map(comment => (
+                      <motion.div
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        key={comment.id}
+                        className={`flex flex-col ${comment.author.id === currentUser.id ? 'items-end' : 'items-start'}`}
+                      >
+                        <div className={clsx(
+                          "rounded-2xl p-3 max-w-[85%] shadow-sm",
+                          comment.author.id === currentUser.id
+                            ? 'bg-brand-500 text-white rounded-br-none'
+                            : 'bg-white dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded-bl-none'
+                        )}>
+                          <p className="text-sm">{comment.text}</p>
+                        </div>
+                        <span className="text-xs text-gray-400 mt-1 font-medium px-1">{comment.author.name} • {comment.timestamp}</span>
+                      </motion.div>
+                    ))}
+                    <div ref={commentsEndRef} />
+                  </>
+                )
+              )}
+            </div>
+
+            {/* Input - Only show comments input for parents */}
+            <div className="p-4 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700">
+              <form onSubmit={activeTab === 'chat' ? handleSendChatMessage : handleAddComment} className="flex items-center space-x-2">
+                <input
+                  type="text"
+                  value={activeTab === 'chat' ? chatInput : newComment}
+                  onChange={(e) => activeTab === 'chat' ? setChatInput(e.target.value) : setNewComment(e.target.value)}
+                  placeholder={activeTab === 'chat' ? "Ask Sparky a question..." : "Add a comment..."}
+                  className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-700 rounded-xl border-2 border-transparent focus:border-brand-500 focus:bg-white dark:focus:bg-gray-800 focus:outline-none transition text-gray-800 dark:text-gray-200 placeholder-gray-400"
+                  disabled={activeTab === 'chat' && isAiThinking}
+                />
+                <button
+                  type="submit"
+                  className="bg-brand-500 text-white p-3 rounded-xl hover:bg-brand-600 transition shadow-lg shadow-brand-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={(activeTab === 'chat' && isAiThinking) || (activeTab === 'comments' && isChild)}
+                >
+                  <SendIcon className="w-5 h-5" />
+                </button>
+              </form>
+            </div>
           </div>
         </div>
       </div>

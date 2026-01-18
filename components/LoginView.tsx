@@ -1,63 +1,229 @@
 import React, { useState } from 'react';
-import { Family } from '../types';
-import { MOCK_FAMILIES } from '../constants';
-import { CloseIcon, GoogleIcon, HaevnLogo } from './icons';
+import { signInWithEmail, sendPasswordReset, signInWithGoogle } from '../services/firebase';
+import { HaevnLogo, GoogleIcon } from './icons';
 
 interface LoginViewProps {
-  onFamilySelect: (family: Family) => void;
+  onLoginSuccess: () => void;
+  onRegister: () => void;
+  onChildLogin: () => void;
 }
 
-const LoginView: React.FC<LoginViewProps> = ({ onFamilySelect }) => {
-  const [isPickerOpen, setIsPickerOpen] = useState(false);
+const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onRegister, onChildLogin }) => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
+
+  const handleEmailLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSuccessMessage('');
+
+    if (!email.trim() || !password.trim()) {
+      setError('Please enter both email and password.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await signInWithEmail(email, password);
+      onLoginSuccess();
+    } catch (err: any) {
+      setError(err.message || 'Login failed. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleGoogleLogin = async () => {
+    setError('');
+    setIsLoading(true);
+    try {
+      await signInWithGoogle();
+      onLoginSuccess();
+    } catch (err: any) {
+      setError(err.message || 'Google login failed. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSuccessMessage('');
+
+    if (!email.trim()) {
+      setError('Please enter your email address.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      await sendPasswordReset(email);
+      setSuccessMessage('Password reset email sent! Check your inbox.');
+      setShowForgotPassword(false);
+    } catch (err: any) {
+      setError(err.message || 'Failed to send reset email.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="flex flex-col h-screen login-background overflow-hidden">
       <main className="flex-1 flex flex-col items-center justify-center p-4">
-        <div className="w-full max-w-xs text-center p-6 bg-white/10 backdrop-blur-md rounded-3xl border border-white/20 shadow-lg">
-          <div className="flex items-center justify-center mb-4 text-white">
-            <HaevnLogo className="w-full h-auto drop-shadow-lg" />
+        <div className="w-full max-w-sm bg-white/90 dark:bg-gray-900/90 backdrop-blur-lg rounded-3xl border border-white/20 shadow-2xl p-8">
+          <div className="flex items-center justify-center mb-6">
+            <HaevnLogo className="w-40 h-auto" />
           </div>
-          <p className="text-md sm:text-lg text-white font-medium drop-shadow-md">
+
+          <p className="text-center text-gray-500 dark:text-gray-400 mb-6 text-sm">
             A safe place to see the world.
           </p>
-        </div>
-      </main>
 
-      <footer className="w-full max-w-xs mx-auto p-4 pt-0">
-        <button
-          onClick={() => setIsPickerOpen(true)}
-          className="flex items-center justify-center w-full bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 font-semibold py-3 px-6 rounded-lg shadow-lg hover:shadow-xl transform hover:-translate-y-1 transition-all duration-300 border border-gray-200 dark:border-gray-700"
-          title="Simulate signing in"
-        >
-          <GoogleIcon className="w-6 h-6 mr-4" />
-          Sign In with Google
-        </button>
-      </footer>
+          {!showForgotPassword ? (
+            <>
+              <form onSubmit={handleEmailLogin} className="space-y-4">
+                <div>
+                  <input
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="Email address"
+                    className="w-full p-3 bg-gray-100 dark:bg-gray-700 rounded-xl border-2 border-transparent focus:border-indigo-500 focus:outline-none transition text-gray-800 dark:text-gray-200"
+                    disabled={isLoading}
+                  />
+                </div>
 
-      {isPickerOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 z-40 flex justify-center items-center p-4 animate-fade-in">
-          <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-2xl w-full max-w-sm relative">
-            <button onClick={() => setIsPickerOpen(false)} className="absolute top-4 right-4 text-gray-500 hover:text-gray-800 dark:hover:text-white transition" aria-label="Close form" title="Close account selection">
-                <CloseIcon />
-            </button>
-            <h2 className="text-2xl font-bold text-gray-800 dark:text-white mb-6 text-center">Choose an account</h2>
-            <p className="text-center text-gray-500 dark:text-gray-400 mb-6 -mt-4 text-sm">(This is a simulation)</p>
-            <div className="space-y-3">
-              {MOCK_FAMILIES.map(family => (
+                <div>
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Password"
+                    className="w-full p-3 bg-gray-100 dark:bg-gray-700 rounded-xl border-2 border-transparent focus:border-indigo-500 focus:outline-none transition text-gray-800 dark:text-gray-200"
+                    disabled={isLoading}
+                  />
+                </div>
+
+                {error && (
+                  <div className="p-3 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-xl text-sm">
+                    {error}
+                  </div>
+                )}
+
+                {successMessage && (
+                  <div className="p-3 bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 rounded-xl text-sm">
+                    {successMessage}
+                  </div>
+                )}
+
                 <button
-                  key={family.id}
-                  onClick={() => onFamilySelect(family)}
-                  className="w-full flex items-center p-3 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition"
-                  title={`Sign in as ${family.name}`}
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full p-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 disabled:bg-indigo-400 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-indigo-500/30 flex items-center justify-center"
                 >
-                  <img src={family.avatarUrl} alt={family.name} className="w-10 h-10 rounded-full mr-4" />
-                  <span className="font-semibold text-gray-800 dark:text-gray-200">{family.name}</span>
+                  {isLoading ? (
+                    <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                  ) : (
+                    'Sign In'
+                  )}
                 </button>
-              ))}
-            </div>
-          </div>
+              </form>
+
+              <div className="mt-4 text-center">
+                <button
+                  onClick={() => setShowForgotPassword(true)}
+                  className="text-sm text-gray-500 dark:text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400"
+                >
+                  Forgot password?
+                </button>
+              </div>
+
+              <div className="relative my-6">
+                <div className="absolute inset-0 flex items-center">
+                  <div className="w-full border-t border-gray-300 dark:border-gray-600"></div>
+                </div>
+                <div className="relative flex justify-center text-sm">
+                  <span className="bg-white dark:bg-gray-900 px-2 text-gray-500">or</span>
+                </div>
+              </div>
+
+              <button
+                onClick={handleGoogleLogin}
+                disabled={isLoading}
+                className="w-full flex items-center justify-center p-3 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 font-semibold rounded-xl shadow-md hover:shadow-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-all border border-gray-200 dark:border-gray-600"
+              >
+                <GoogleIcon className="w-5 h-5 mr-3" />
+                Continue with Google
+              </button>
+
+              <div className="mt-6 text-center space-y-2">
+                <button
+                  onClick={onRegister}
+                  className="text-indigo-600 dark:text-indigo-400 hover:underline font-medium text-sm"
+                >
+                  Create a new account
+                </button>
+              </div>
+            </>
+          ) : (
+            <form onSubmit={handleForgotPassword} className="space-y-4">
+              <p className="text-center text-gray-600 dark:text-gray-300 text-sm mb-4">
+                Enter your email and we'll send you a link to reset your password.
+              </p>
+
+              <div>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="Email address"
+                  className="w-full p-3 bg-gray-100 dark:bg-gray-700 rounded-xl border-2 border-transparent focus:border-indigo-500 focus:outline-none transition text-gray-800 dark:text-gray-200"
+                  disabled={isLoading}
+                />
+              </div>
+
+              {error && (
+                <div className="p-3 bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 rounded-xl text-sm">
+                  {error}
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isLoading}
+                className="w-full p-3 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700 disabled:bg-indigo-400 disabled:cursor-not-allowed transition-all"
+              >
+                {isLoading ? 'Sending...' : 'Send Reset Link'}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => { setShowForgotPassword(false); setError(''); }}
+                className="w-full text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 text-sm"
+              >
+                ← Back to login
+              </button>
+            </form>
+          )}
         </div>
-      )}
+
+        {/* Child Login Button */}
+        <button
+          onClick={onChildLogin}
+          className="mt-6 px-8 py-3 bg-gradient-to-r from-pink-500 to-purple-500 text-white font-bold rounded-full shadow-lg hover:shadow-xl hover:scale-105 transition-all duration-300 flex items-center space-x-2"
+        >
+          <span className="text-2xl">👦</span>
+          <span>I'm a Child</span>
+        </button>
+      </main>
     </div>
   );
 };
