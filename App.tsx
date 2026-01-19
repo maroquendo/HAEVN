@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import Header from './components/Header';
 import AddVideoForm from './components/AddVideoForm';
 import VideoPlayerView from './components/VideoPlayerView';
@@ -584,41 +585,58 @@ const App: React.FC = () => {
           {isLocked ? (
             <LockedScreenView reason={lockReason as 'timeLimit' | 'schedule'} />
           ) : (
-            <>
-              {currentView === 'home' && <HomeView videos={videos} onSelectVideo={handleSelectVideo} currentUser={currentUser} onDeleteVideo={handleDeleteVideoClick} />}
-              {currentView === 'history' && <HistoryView videos={videos} onSelectVideo={handleSelectVideo} currentUser={currentUser} onDeleteVideo={handleDeleteVideoClick} />}
-              {currentView === 'subscriptions' && (
-                <SubscriptionsView
-                  subscriptions={subscriptions}
-                  userRole={currentUser.role}
-                  onAddSubscriptionClick={() => setIsAddSubOpen(true)}
-                />
-              )}
-              {currentView === 'wishlist' && (
-                <WishlistView
-                  wishes={wishes}
-                  currentUser={currentUser}
-                  onAddWish={handleAddWish}
-                  onFulfillWish={handleFulfillWish}
-                  onRejectWish={handleRejectWish}
-                  onFindRecommendations={handleFindRecommendations}
-                  onAddRecommendedVideo={handleOpenAddVideoFormWithData}
-                />
-              )}
-              {currentView === 'settings' && currentUser.role === 'parent' && (
-                <SettingsView
-                  controls={parentalControls}
-                  onUpdateControls={(newControls) => {
-                    setParentalControls(newControls);
-                    if (currentFamily) updateFamilyData(currentFamily.id, { parentalControls: newControls });
-                  }}
-                  family={currentFamily}
-                  onAddMember={handleAddMember}
-                  onEditMember={handleEditMember}
-                  onRemoveMember={handleRemoveMember}
-                />
-              )}
-            </>
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={currentView}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.3 }}
+                className="w-full h-full"
+              >
+                {currentView === 'home' && (
+                  <HomeView
+                    videos={videos}
+                    onSelectVideo={handleSelectVideo}
+                    currentUser={currentUser}
+                    onDeleteVideo={handleDeleteVideoClick}
+                  />
+                )}
+
+                {currentView === 'history' && <HistoryView videos={videos} onSelectVideo={handleSelectVideo} currentUser={currentUser} onDeleteVideo={handleDeleteVideoClick} />}
+                {currentView === 'subscriptions' && (
+                  <SubscriptionsView
+                    subscriptions={subscriptions}
+                    userRole={currentUser.role}
+                    onAddSubscriptionClick={() => setIsAddSubOpen(true)}
+                  />
+                )}
+                {currentView === 'wishlist' && (
+                  <WishlistView
+                    wishes={wishes}
+                    currentUser={currentUser}
+                    onAddWish={handleAddWish}
+                    onFulfillWish={handleFulfillWish}
+                    onRejectWish={handleRejectWish}
+                    onFindRecommendations={handleFindRecommendations}
+                    onAddRecommendedVideo={handleOpenAddVideoFormWithData}
+                  />
+                )}
+                {currentView === 'settings' && currentUser.role === 'parent' && (
+                  <SettingsView
+                    controls={parentalControls}
+                    onUpdateControls={(newControls) => {
+                      setParentalControls(newControls);
+                      if (currentFamily) updateFamilyData(currentFamily.id, { parentalControls: newControls });
+                    }}
+                    family={currentFamily}
+                    onAddMember={handleAddMember}
+                    onEditMember={handleEditMember}
+                    onRemoveMember={handleRemoveMember}
+                  />
+                )}
+              </motion.div>
+            </AnimatePresence>
           )}
         </main>
       </div>
