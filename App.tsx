@@ -397,6 +397,12 @@ const App: React.FC = () => {
     if (!currentFamily) return;
     const newWishes = wishes.map(w => w.id === wishId ? { ...w, status: 'fulfilled' as 'fulfilled' } : w);
     setWishes(newWishes);
+
+    // Notify (simulating that the parent fulfilled it)
+    showLocalNotification("Wish Granted! ✨", {
+      body: "A new wish has been fulfilled!",
+      tag: 'wish-fulfilled'
+    });
     await updateFamilyData(currentFamily.id, { wishes: newWishes });
   }, [currentFamily, wishes]);
 
@@ -456,9 +462,17 @@ const App: React.FC = () => {
   }, [wishes, currentFamily]);
 
   const handleCloseAddVideoForm = useCallback(() => {
+    // Show notification if supported
+    if (document.hidden && videoFormData?.title) {
+      showLocalNotification("New Video Added! 🎬", {
+        body: `${videoFormData.title} has been added to the feed.`,
+        tag: 'new-video'
+      });
+    }
+
     setIsAddVideoOpen(false);
     setVideoFormData(undefined);
-  }, []);
+  }, [videoFormData]);
 
   const handleDeleteVideoClick = useCallback((videoId: string) => {
     setVideoToDelete(videoId);
