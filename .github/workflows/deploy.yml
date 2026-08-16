@@ -8,12 +8,6 @@ on:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
-
-concurrency:
-  group: 'deploy'
-  cancel-in-progress: true
 
 jobs:
   build-and-deploy:
@@ -37,26 +31,9 @@ jobs:
       - name: Build Web Application
         run: npm run build
 
-      - name: Deploy to Firebase Hosting
-        uses: FirebaseExtended/action-hosting-deploy@v0
+      - name: Deploy to GitHub Pages (gh-pages branch)
+        uses: JamesIves/github-pages-deploy-action@v4
         with:
-          repoToken: '${{ secrets.GITHUB_TOKEN }}'
-          firebaseServiceAccount: '${{ secrets.FIREBASE_SERVICE_ACCOUNT_GEN_LANG_CLIENT_0636949609 }}'
-          channelId: live
-          projectId: gen-lang-client-0636949609
-        continue-on-error: true
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-        continue-on-error: true
-
-      - name: Upload Pages Artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: 'dist'
-        continue-on-error: true
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
-        continue-on-error: true
+          folder: dist
+          branch: gh-pages
+          clean: true
