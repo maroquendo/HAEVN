@@ -16,11 +16,16 @@ import LoginView from './components/LoginView';
 import RegisterView from './components/RegisterView';
 import ChildLoginView from './components/ChildLoginView';
 import FamilyView from './components/FamilyView';
-import { CloseIcon, KeyIcon, TrashIcon } from './components/icons'; import { MOCK_FAMILIES } from './constants';
+import OfflineIndicator from './components/OfflineIndicator';
+import ParentPinModal from './components/ParentPinModal';
+import FamilyTreeView from './components/FamilyTreeView';
+import { CloseIcon, KeyIcon, TrashIcon } from './components/icons';
+import { MOCK_FAMILIES, MASTER_EMAIL } from './constants';
 import { Video, Subscription, Wish, ParentalControls, AppData, Family, User } from './types';
 import { getRecommendedVideosForWish } from './services/geminiService';
 import { showLocalNotification } from './services/notificationService';
 import getInitialData, { SHARABLE_VIDEOS } from './utils/data';
+import { extractCleanUrl } from './utils/videoUrlParser';
 import { auth, signInWithGoogle, signOut, mapFirebaseUserToAppUser } from './services/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import {
@@ -34,9 +39,15 @@ import {
   updateMember,
   removeMember,
   verifyChildPin,
-  resetChildPin,
   suspendChild,
-  unsuspendChild
+  unsuspendChild,
+  setParentPin,
+  verifyParentPin,
+  hasParentPin,
+  addChildMember,
+  resetChildPin,
+  resetFamilyData,
+  updateFamilySharingRules
 } from './services/firestore';
 
 
@@ -80,8 +91,15 @@ const App: React.FC = () => {
   const [currentView, setCurrentView] = useState<'home' | 'history' | 'subscriptions' | 'wishlist' | 'settings' | 'family'>('home');
   const [isAddVideoOpen, setIsAddVideoOpen] = useState(false);
   const [isAddSubOpen, setIsAddSubOpen] = useState(false);
+  const [isFamilyTreeOpen, setIsFamilyTreeOpen] = useState(false);
   const [videoFormData, setVideoFormData] = useState<{ url: string, title: string } | undefined>(undefined);
   const [videoToDelete, setVideoToDelete] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // View mode state for parent to preview as child
+  const [viewMode, setViewMode] = useState<'parent' | 'child'>('parent');
+  const [showPinModal, setShowPinModal] = useState<'setup' | 'verify' | 'change' | null>(null);
+  const [needsPinSetup, setNeedsPinSetup] = useState(false);
 
   // Auth Effect - CRITICAL: Always set isLoading to false after auth resolves
   useEffect(() => {
@@ -104,8 +122,64 @@ const App: React.FC = () => {
 
       if (firebaseUser) {
         const appUser = mapFirebaseUserToAppUser(firebaseUser);
-        setCurrentUser(appUser);
-        // Don't set isLoading to false here - let family initialization do it
+
+        // --- SECURITY CHECK ---
+        // 1. Is it the Master Account?
+        if (appUser.email === MASTER_EMAIL) {
+          setCurrentUser(appUser);
+          return;
+        }
+
+        // 2. Is it a mapped family member?
+        // We need to check if this user is allowed (i.e., is a member of an existing family)
+        setIsLoading(true);
+
+        const timeoutPromise = new Promise<{ timeout: true }>((resolve) => {
+          setTimeout(() => resolve({ timeout: true }), 10000);
+        });
+
+        Promise.race([
+          getFamilyForUser(appUser.email!),
+          timeoutPromise
+        ]).then(async result => {
+          if (result && 'timeout' in result) {
+            console.warn("User profile load timed out");
+            setIsLoading(false);
+            return;
+          }
+
+          const family = result as Family | null;
+
+          if (family) {
+            // Check if we need to "claim" an invite (update temporary ID to real ID)
+            const isMemberById = family.members.some(m => m.id === appUser.id);
+            if (!isMemberById) {
+              console.log("Claiming invite for user", appUser.email);
+              try {
+                await joinFamily(appUser, family.id);
+              } catch (e) {
+                console.error("Failed to join family", e);
+              }
+            }
+
+            setCurrentUser(appUser);
+            setCurrentFamily(family);
+          } else {
+            console.warn(`Access denied for ${appUser.email}. Not a member of any family.`);
+            alert("Access Denied: You must be invited to a family to join HAEVN.");
+            signOut();
+            setCurrentUser(null);
+          }
+          setIsLoading(false);
+        }).catch(err => {
+          console.error("Auth verification failed", err);
+          signOut();
+          setCurrentUser(null);
+          setIsLoading(false);
+        });
+
+        // Return here to avoid setting currentUser immediately for non-master
+        return;
       } else {
         console.log('No user - setting isLoading to false');
         setCurrentUser(null);
@@ -121,11 +195,18 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Magic Link Handler
+  // Magic Link Handler & Invite Link Handler
   useEffect(() => {
     const handleMagicLink = async () => {
       const params = new URLSearchParams(window.location.search);
       const pin = params.get('child_pin');
+      const inviteFamilyId = params.get('invite');
+      const inviteEmail = params.get('email');
+
+      if (inviteFamilyId) {
+        console.log('Detected family invitation in URL:', inviteFamilyId, inviteEmail);
+        sessionStorage.setItem('haevn_pending_invite', JSON.stringify({ familyId: inviteFamilyId, email: inviteEmail }));
+      }
 
       if (pin && !childSession && !currentUser) {
         console.log('Detected Magic Link PIN. Verifying...');
@@ -160,9 +241,9 @@ const App: React.FC = () => {
       console.log('Starting family initialization for user:', currentUser.email);
       setIsLoading(true);
 
-      // Timeout promise to prevent hanging
+      // Timeout promise to prevent hanging (reduced to 5s for dev/offline mode)
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Family initialization timeout (10s)')), 10000);
+        setTimeout(() => reject(new Error('Family initialization timeout (5s)')), 5000);
       });
 
       try {
@@ -170,10 +251,26 @@ const App: React.FC = () => {
         const familyInit = async () => {
           let family = await getFamilyForUser(currentUser.email);
 
+          // If not found yet, check if there was a pending invite stored in session
+          if (!family) {
+            const pendingInviteStr = sessionStorage.getItem('haevn_pending_invite');
+            if (pendingInviteStr) {
+              try {
+                const { familyId } = JSON.parse(pendingInviteStr);
+                if (familyId) {
+                  await joinFamily(currentUser, familyId);
+                  family = await getFamilyForUser(currentUser.email);
+                }
+              } catch (e) {
+                console.warn('Failed to claim pending invite from session storage:', e);
+              }
+            }
+          }
+
           if (family) {
             console.log('Found existing family:', family.name);
             // Check if pending and join
-            const me = family.members.find(m => m.email === currentUser.email);
+            const me = family.members.find(m => m.email?.toLowerCase() === currentUser.email?.toLowerCase());
             if (me && me.status === 'pending') {
               await joinFamily(currentUser, family.id);
             }
@@ -188,42 +285,147 @@ const App: React.FC = () => {
         setCurrentFamily(family);
       } catch (error) {
         console.error("Error initializing family:", error);
-        // Show error but still allow app to load - user can retry
-        // Don't block the entire app
+        console.warn("Falling back to local/offline mode due to connection issue");
+
+        // Restore or Create Offline Family
+        const offlineMeta = localStorage.getItem('haevn_offline_family_meta');
+        let mockFamily: Family;
+
+        if (offlineMeta) {
+          console.log("Restoring cached offline family");
+          mockFamily = JSON.parse(offlineMeta);
+        } else {
+          // Create MOCK family for offline development
+          mockFamily = {
+            id: 'local_offline_family',
+            name: `${currentUser.name || 'My'}'s Family (Offline)`,
+            members: [{
+              ...currentUser,
+              role: 'parent',
+              status: 'active',
+              id: currentUser.id || 'offline_user_id'
+            }],
+            ownerId: currentUser.id,
+            pin: '0000',
+            avatarUrl: currentUser.avatarUrl || 'https://ui-avatars.com/api/?name=Family'
+          };
+          localStorage.setItem('haevn_offline_family_meta', JSON.stringify(mockFamily));
+        }
+
+        setCurrentFamily(mockFamily);
       } finally {
-        console.log('Family initialization complete, setting isLoading to false');
         setIsLoading(false);
       }
+
     };
 
     initFamily();
   }, [currentUser]); // Depend only on currentUser
 
-  // Handle Web Share Target (Android Share Menu)
+  // Check if parent needs to set up PIN (after family is loaded)
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const title = params.get('title');
-    const text = params.get('text');
-    const url = params.get('url');
-
-    if (title || text || url) {
-      // Some apps put the URL in 'text'
-      let finalUrl = url;
-      if (!finalUrl && text && text.startsWith('http')) {
-        finalUrl = text;
+    const checkPinSetup = async () => {
+      if (currentFamily && currentUser && currentUser.role === 'parent') {
+        const hasPinSet = await hasParentPin(currentFamily.id, currentUser.id);
+        if (!hasPinSet) {
+          setNeedsPinSetup(true);
+          setShowPinModal('setup');
+        }
       }
+    };
+    checkPinSetup();
+  }, [currentFamily, currentUser]);
 
-      if (finalUrl) {
-        setVideoFormData({
-          title: title || '',
-          url: finalUrl
-        });
-        setIsAddVideoOpen(true);
+  // Handle view mode switching
+  const handleSwitchToChildView = useCallback(() => {
+    setViewMode('child');
+  }, []);
 
-        // Clean URL without refresh
-        window.history.replaceState({}, '', window.location.pathname);
+  const handleSwitchToParentView = useCallback(async () => {
+    if (!currentFamily || !currentUser) return;
+
+    // Check if user has a PIN set
+    const hasPinSet = await hasParentPin(currentFamily.id, currentUser.id);
+    if (hasPinSet) {
+      setShowPinModal('verify');
+    } else {
+      // No PIN set - prompt to create one first
+      setShowPinModal('setup');
+    }
+  }, [currentFamily, currentUser]);
+
+  const handlePinSuccess = useCallback(async (pin: string): Promise<boolean> => {
+    if (!currentFamily || !currentUser) return false;
+
+    if (showPinModal === 'setup' || showPinModal === 'change') {
+      await setParentPin(currentFamily.id, currentUser.id, pin);
+      setNeedsPinSetup(false);
+      // If we were in child view and just set up a PIN, return to parent view
+      if (viewMode === 'child') {
+        setViewMode('parent');
+      }
+      setShowPinModal(null);
+      return true;
+    } else if (showPinModal === 'verify') {
+      const isValid = await verifyParentPin(currentFamily.id, currentUser.id, pin);
+      if (isValid) {
+        setViewMode('parent');
+        setShowPinModal(null);
+        return true;
+      } else {
+        return false;
       }
     }
+    setShowPinModal(null);
+    return true;
+  }, [currentFamily, currentUser, showPinModal, viewMode]);
+
+  const handlePinCancel = useCallback(() => {
+    if (showPinModal === 'setup' && needsPinSetup) {
+      // Can't cancel initial setup
+      return;
+    }
+    setShowPinModal(null);
+  }, [showPinModal, needsPinSetup]);
+
+  // Effective role considers viewMode for parents previewing as child
+  const effectiveRole = currentUser?.role === 'parent' && viewMode === 'child' ? 'child' : currentUser?.role || 'child';
+
+  // Handle Web Share Target (Android Share Menu) & Native Bridge Intents
+  useEffect(() => {
+    const handleIncomingShare = (rawText?: string | null, rawUrl?: string | null, rawTitle?: string | null) => {
+      const source = rawUrl || rawText || '';
+      const cleanUrl = extractCleanUrl(source);
+      if (cleanUrl && cleanUrl.startsWith('http')) {
+        setVideoFormData({
+          title: rawTitle || '',
+          url: cleanUrl
+        });
+        setIsAddVideoOpen(true);
+      }
+    };
+
+    // 1. Check URL query params on page load
+    const params = new URLSearchParams(window.location.search);
+    const titleParam = params.get('title');
+    const textParam = params.get('text');
+    const urlParam = params.get('url');
+
+    if (titleParam || textParam || urlParam) {
+      handleIncomingShare(textParam, urlParam, titleParam);
+      // Clean URL without refresh
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+
+    // 2. Listen for Native Android postMessage from MainActivity
+    const onMessage = (event: MessageEvent) => {
+      if (event.data && event.data.type === 'HAEVN_SHARE_TARGET') {
+        handleIncomingShare(event.data.text, null, event.data.title);
+      }
+    };
+
+    window.addEventListener('message', onMessage);
+    return () => window.removeEventListener('message', onMessage);
   }, []);
 
   // Subscriptions Effect
@@ -300,6 +502,9 @@ const App: React.FC = () => {
   const handleLogout = useCallback(async () => {
     try {
       await signOut();
+      setChildSession(null); // Clear local child session
+      setAuthView('login'); // Reset auth view
+      setIsLoading(false);
     } catch (error) {
       console.error("Logout failed", error);
     }
@@ -321,14 +526,12 @@ const App: React.FC = () => {
     const newVideos = [video, ...videos];
     // Optimistic update
     setVideos(newVideos);
-    await updateFamilyData(currentFamily.id, { videos: newVideos });
+    showLocalNotification('New Video Added!', {
+      body: `"${video.title}" is now ready for your child to watch.`,
+      tag: `new-video-${video.id}`,
+    });
 
-    if (document.visibilityState === 'hidden') {
-      showLocalNotification('New Video Added!', {
-        body: `"${video.title}" is now ready for your child to watch.`,
-        tag: `new-video-${video.id}`,
-      });
-    }
+    await updateFamilyData(currentFamily.id, { videos: newVideos });
   }, [currentFamily, videos]);
 
   const handleAddSubscription = useCallback(async (subscription: Subscription) => {
@@ -413,23 +616,26 @@ const App: React.FC = () => {
     await updateFamilyData(currentFamily.id, { wishes: newWishes });
   }, [currentFamily, wishes]);
 
-  const handleAddMember = useCallback((name: string, role: 'child' | 'parent', email?: string): User | null => {
+  const handleAddMember = useCallback(async (name: string, role: 'child' | 'parent', email?: string, relationship?: string): Promise<User | null> => {
     if (!currentFamily) return null;
 
     if (email) {
-      inviteMember(currentFamily.id, email, role).catch(err => {
-        console.error("Failed to invite member:", err);
-        alert("Failed to send invite. Please check the email.");
-      });
-      return null; // Async invite
+      const invitedMember = await inviteMember(currentFamily.id, email, role, relationship, name);
+      // Update local family state immediately so the parent sees the new card in the tree
+      const updatedMembers = [...currentFamily.members.filter(m => m.email?.toLowerCase() !== email.toLowerCase()), invitedMember];
+      setCurrentFamily(prev => prev ? { ...prev, members: updatedMembers } : prev);
+      return invitedMember;
+    } else if (role === 'child') {
+      try {
+        const newMember = await addChildMember(currentFamily.id, name, relationship);
+        const updatedMembers = [...currentFamily.members, newMember];
+        setCurrentFamily(prev => prev ? { ...prev, members: updatedMembers } : prev);
+        return newMember;
+      } catch (error) {
+        console.error("Error adding child:", error);
+        throw error;
+      }
     }
-
-    // Fallback for non-email members (e.g. dummy child accounts)?
-    // For now, we enforce email for simplicity or just create a local dummy?
-    // The previous logic created a dummy user.
-    // Let's keep the dummy logic if no email is provided, but warn.
-    // Actually, SettingsView now asks for email.
-
     return null;
   }, [currentFamily]);
 
@@ -442,6 +648,14 @@ const App: React.FC = () => {
     if (!currentFamily) return;
     removeMember(currentFamily.id, userId);
   }, [currentFamily]);
+
+  const handleResetData = useCallback(async () => {
+    if (!currentFamily || !currentUser) return;
+    if (confirm("DANGER: This will wipe all family data, members, and settings. Only your account will remain. Are you sure?")) {
+      await resetFamilyData(currentFamily.id, currentUser.id);
+      window.location.reload(); // Reload to refresh all state from clean slate
+    }
+  }, [currentFamily, currentUser]);
 
 
   const handleFindRecommendations = useCallback(async (wishId: string) => {
@@ -497,15 +711,26 @@ const App: React.FC = () => {
     if (currentUser?.role !== 'child' || !parentalControls.isEnabled) {
       return { isLocked: false, lockReason: null };
     }
-    const timeLimitInSeconds = parentalControls.dailyTimeLimit * 60;
+
+    // Check if weekend (Saturday = 6, Sunday = 0)
+    const now = new Date();
+    const isWeekend = now.getDay() === 0 || now.getDay() === 6;
+    const weekendExtra = (isWeekend && parentalControls.weekendExtraMinutes) ? parentalControls.weekendExtraMinutes : 0;
+
+    // Check child-specific override
+    const childOverride = currentUser ? parentalControls.childOverrides?.[currentUser.id] : undefined;
+    const effectiveLimitMinutes = (childOverride?.dailyTimeLimit ?? parentalControls.dailyTimeLimit) + weekendExtra;
+    const effectiveSchedule = childOverride?.schedule ?? parentalControls.schedule;
+
+    const timeLimitInSeconds = effectiveLimitMinutes * 60;
     if (dailyWatchTime >= timeLimitInSeconds) {
       return { isLocked: true, lockReason: 'timeLimit' };
     }
-    const now = new Date();
+
     const currentTime = now.getHours() * 60 + now.getMinutes();
-    const [startHour, startMinute] = parentalControls.schedule.start.split(':').map(Number);
+    const [startHour, startMinute] = effectiveSchedule.start.split(':').map(Number);
     const startTime = startHour * 60 + startMinute;
-    const [endHour, endMinute] = parentalControls.schedule.end.split(':').map(Number);
+    const [endHour, endMinute] = effectiveSchedule.end.split(':').map(Number);
     const endTime = endHour * 60 + endMinute;
     if (currentTime < startTime || currentTime > endTime) {
       return { isLocked: true, lockReason: 'schedule' };
@@ -517,8 +742,20 @@ const App: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-brand-50 dark:bg-gray-900">
+      <div className="flex flex-col items-center justify-center min-h-screen bg-brand-50 dark:bg-gray-900 gap-4">
         <div className="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-brand-500"></div>
+        <p className="text-gray-500 dark:text-gray-400 animate-pulse">Loading HAEVN...</p>
+
+        {/* Failsafe Button - shows after a delay via CSS animation or just always there but small */}
+        <button
+          onClick={() => {
+            localStorage.clear();
+            window.location.reload();
+          }}
+          className="mt-8 text-xs text-red-500 hover:text-red-600 underline opacity-80"
+        >
+          Stuck? Click to Reset App
+        </button>
       </div>
     );
   }
@@ -571,7 +808,8 @@ const App: React.FC = () => {
           <LoginView
             onLoginSuccess={() => { }} // Firebase auth handles this via onAuthStateChanged
             onRegister={() => setAuthView('register')}
-            onChildLogin={() => setAuthView('child-login')}
+            onChildLogin={handleChildPinLogin}
+            verifyPin={verifyChildPin}
           />
         );
     }
@@ -579,19 +817,27 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-brand-50 dark:bg-gray-900 text-gray-800 dark:text-gray-200 flex flex-col h-screen font-sans">
+      <OfflineIndicator />
       <Header
         currentUser={currentUser}
         onSwitchProfile={handleSwitchProfile}
         onAddVideoClick={() => setIsAddVideoOpen(true)}
         currentFamily={currentFamily}
         onLogout={handleLogout}
+        viewMode={viewMode}
+        onSwitchToChildView={handleSwitchToChildView}
+        onSwitchToParentView={handleSwitchToParentView}
+        onChangePin={() => setShowPinModal('change')}
+        onOpenFamilyTree={() => setIsFamilyTreeOpen(true)}
+        searchQuery={searchQuery}
+        onSearchChange={setSearchQuery}
       />
       <div className="flex flex-1 pt-20 overflow-hidden">
         <Sidebar
-          userRole={currentUser.role}
+          userRole={effectiveRole}
           currentView={currentView}
           onViewChange={setCurrentView}
-          pendingWishesCount={currentUser.role === 'parent' ? pendingWishesCount : 0}
+          pendingWishesCount={effectiveRole === 'parent' ? pendingWishesCount : 0}
           dailyWatchTime={dailyWatchTime}
           parentalControls={parentalControls}
         />
@@ -614,10 +860,19 @@ const App: React.FC = () => {
                     onSelectVideo={handleSelectVideo}
                     currentUser={currentUser}
                     onDeleteVideo={handleDeleteVideoClick}
+                    searchQuery={searchQuery}
                   />
                 )}
 
-                {currentView === 'history' && <HistoryView videos={videos} onSelectVideo={handleSelectVideo} currentUser={currentUser} onDeleteVideo={handleDeleteVideoClick} />}
+                {currentView === 'history' && (
+                  <HistoryView
+                    videos={videos}
+                    onSelectVideo={handleSelectVideo}
+                    currentUser={currentUser}
+                    onDeleteVideo={handleDeleteVideoClick}
+                    searchQuery={searchQuery}
+                  />
+                )}
                 {currentView === 'subscriptions' && (
                   <SubscriptionsView
                     subscriptions={subscriptions}
@@ -636,17 +891,37 @@ const App: React.FC = () => {
                     onAddRecommendedVideo={handleOpenAddVideoFormWithData}
                   />
                 )}
-                {currentView === 'settings' && currentUser.role === 'parent' && (
+                {currentView === 'family' && currentFamily && (
+                  <FamilyView
+                    family={currentFamily}
+                    currentUser={currentUser}
+                    onAddMember={handleAddMember}
+                    onEditMember={handleEditMember}
+                    onRemoveMember={handleRemoveMember}
+                    onResetPin={(childId) => resetChildPin(currentFamily.id, childId)}
+                    onSuspendChild={(childId) => suspendChild(currentFamily.id, childId)}
+                    onUnsuspendChild={(childId) => unsuspendChild(currentFamily.id, childId)}
+                    onUpdateSharingRules={(sharingRules) => updateFamilySharingRules(currentFamily.id, sharingRules)}
+                  />
+                )}
+                {currentView === 'settings' && (
                   <SettingsView
                     controls={parentalControls}
                     onUpdateControls={(newControls) => {
                       setParentalControls(newControls);
-                      if (currentFamily) updateFamilyData(currentFamily.id, { parentalControls: newControls });
+                      if (currentFamily) {
+                        updateFamilyData(currentFamily.id, { parentalControls: newControls });
+                      }
                     }}
                     family={currentFamily}
+                    currentUser={currentUser}
                     onAddMember={handleAddMember}
                     onEditMember={handleEditMember}
                     onRemoveMember={handleRemoveMember}
+                    onResetPin={currentFamily ? (childId) => resetChildPin(currentFamily.id, childId) : async () => ''}
+                    onSuspendChild={currentFamily ? (childId) => suspendChild(currentFamily.id, childId) : async () => { }}
+                    onUnsuspendChild={currentFamily ? (childId) => unsuspendChild(currentFamily.id, childId) : async () => { }}
+                    onResetFamilyData={currentUser.role === 'parent' ? handleResetData : undefined}
                   />
                 )}
               </motion.div>
@@ -662,6 +937,7 @@ const App: React.FC = () => {
           initialData={videoFormData}
           currentUser={currentUser}
           familyMembers={currentFamily.members}
+          sharingRules={currentFamily.sharingRules}
         />
       )}
 
@@ -681,6 +957,7 @@ const App: React.FC = () => {
           onAiHelpRequest={handleAiHelpRequest}
           currentUser={currentUser}
           onDeleteVideo={handleDeleteVideoClick}
+          parentalControls={parentalControls}
         />
       )}
 
@@ -696,6 +973,42 @@ const App: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Parent PIN Modal */}
+      {showPinModal && (
+        <ParentPinModal
+          mode={showPinModal}
+          onSuccess={handlePinSuccess}
+          onCancel={handlePinCancel}
+          title={showPinModal === 'setup' ? 'Set Your Parent PIN' : showPinModal === 'verify' ? 'Enter PIN to Exit Child View' : 'Change Parent PIN'}
+        />
+      )}
+
+      {/* Child View Mode Banner */}
+      {viewMode === 'child' && currentUser?.role === 'parent' && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40">
+          <button
+            onClick={handleSwitchToParentView}
+            className="flex items-center gap-2 px-6 py-3 bg-purple-600 text-white font-bold rounded-full shadow-lg hover:bg-purple-700 transition-all animate-pulse"
+          >
+            👁️ Viewing as Child - Tap to Exit
+          </button>
+        </div>
+      )}
+
+      {/* Family Tree Modal Overlay */}
+      {isFamilyTreeOpen && currentFamily && currentUser && (
+        <FamilyTreeView
+          family={currentFamily}
+          currentUser={currentUser}
+          onClose={() => setIsFamilyTreeOpen(false)}
+          onSelectMember={(member) => {
+            // Close tree and switch to family view to manage details
+            setIsFamilyTreeOpen(false);
+            setCurrentView('family');
+          }}
+        />
       )}
     </div>
   );

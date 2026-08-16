@@ -7,15 +7,20 @@ const USER_DAD = initialFamily.members.find(m => m.role === 'parent' && m.name.i
 const USER_MOM = initialFamily.members.find(m => m.role === 'parent' && m.name.includes('Jane'))!;
 const USER_CHILD = initialFamily.members.find(m => m.role === 'child')!;
 
-const getInitialData = (): AppData => {
+const getInitialData = (creator?: User): AppData => {
+  // Use creator if provided, otherwise fallback to mock data (or just use creator for everything to avoid "Jane")
+  // If no creator, we might still have to fallback to mock, but ideally this is called with a user.
+
+  const defaultSender = creator || USER_DAD; // Fallback to a mock dad if absolutely necessary, but generally creator.
+
   const INITIAL_VIDEOS: Video[] = [
     {
       id: 'gBq2H2a5_5k',
       url: 'https://www.youtube.com/watch?v=gBq2H2a5_5k',
       title: 'Amazing Animals | Fun Facts for Kids',
       summary: 'Explore the animal kingdom! This video is packed with amazing facts about all sorts of animals, from the tiniest insects to the largest whales. It is perfect for curious kids who love wildlife.',
-      sender: USER_DAD,
-      recipients: [USER_CHILD],
+      sender: defaultSender,
+      recipients: [], // default to everyone or none
       status: 'unseen',
       watchDuration: 0,
       totalDuration: 185, // 3 minutes 5 seconds
@@ -28,7 +33,7 @@ const getInitialData = (): AppData => {
       comments: [
         {
           id: '1',
-          author: USER_DAD,
+          author: defaultSender,
           text: 'Let me know what you think of this one!',
           timestamp: '10:30 AM',
         },
@@ -40,8 +45,8 @@ const getInitialData = (): AppData => {
       url: 'https://www.youtube.com/watch?v=yPYZpwSpKmA',
       title: 'How to Draw a Cartoon Dog',
       summary: 'This is a simple step-by-step tutorial on how to draw a cute cartoon dog. The video is easy to follow and perfect for kids who love to draw. Grab your pencil and paper and get ready to create your own masterpiece!',
-      sender: USER_MOM,
-      recipients: [USER_CHILD],
+      sender: defaultSender,
+      recipients: [],
       status: 'seen',
       watchDuration: 300,
       totalDuration: 320,
@@ -54,15 +59,9 @@ const getInitialData = (): AppData => {
       comments: [
         {
           id: '2',
-          author: USER_MOM,
+          author: defaultSender,
           text: 'Hope you like this drawing tutorial!',
           timestamp: '11:00 AM',
-        },
-        {
-          id: '3',
-          author: USER_CHILD,
-          text: 'I loved it! I drew a dog!',
-          timestamp: '11:05 AM',
         },
       ],
       chatHistory: [],
@@ -89,7 +88,7 @@ const getInitialData = (): AppData => {
       id: 'wish1',
       text: 'I want to see videos about funny cats!',
       status: 'pending',
-      author: USER_CHILD,
+      author: { ...USER_CHILD, name: 'Child' }, // Generic child author if unknown
       timestamp: 'Yesterday',
     },
   ];
@@ -101,6 +100,7 @@ const getInitialData = (): AppData => {
       end: '18:00',
     },
     isEnabled: false, // Controls are off by default
+    strictPrivacy: false,
   };
 
   return {

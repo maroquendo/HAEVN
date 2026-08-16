@@ -1,6 +1,7 @@
 /**
  * Video URL Parser Utility
- * Handles extracting video IDs and metadata from various social media platforms
+ * Handles extracting video IDs, sanitizing raw share text, and fetching metadata
+ * from YouTube, Instagram, TikTok, Twitter/X, and Facebook.
  */
 
 export type VideoPlatform = 'youtube' | 'instagram' | 'tiktok' | 'twitter' | 'facebook' | 'unknown';
@@ -13,11 +14,39 @@ export interface ParsedVideoUrl {
     thumbnailUrl: string | null;
 }
 
+export interface VideoMetadata {
+    title?: string;
+    thumbnailUrl?: string;
+    authorName?: string;
+    duration?: number;
+    description?: string;
+    realVideoId?: string;
+    directStreamUrl?: string;
+}
+
+/**
+ * Extract clean URL from raw text (e.g. Android Share Sheet message containing captions + link)
+ */
+export function extractCleanUrl(rawText: string): string {
+    if (!rawText) return '';
+    const trimmed = rawText.trim();
+
+    // Match HTTP/HTTPS URL
+    const urlMatch = trimmed.match(/(https?:\/\/[^\s]+)/i);
+    if (urlMatch && urlMatch[1]) {
+        let url = urlMatch[1];
+        // Strip trailing punctuation like parenthesis, commas, dots
+        url = url.replace(/[).,;!?]+$/, '');
+        return url;
+    }
+    return trimmed;
+}
+
 /**
  * Parse a video URL and extract platform-specific information
  */
-export function parseVideoUrl(url: string): ParsedVideoUrl {
-    const trimmedUrl = url.trim();
+export function parseVideoUrl(urlInput: string): ParsedVideoUrl {
+    const trimmedUrl = extractCleanUrl(urlInput);
 
     // YouTube
     const youtubeId = extractYouTubeId(trimmedUrl);
@@ -26,7 +55,8 @@ export function parseVideoUrl(url: string): ParsedVideoUrl {
             platform: 'youtube',
             videoId: youtubeId,
             originalUrl: trimmedUrl,
-            embedUrl: `https://www.youtube-nocookie.com/embed/${youtubeId}?rel=0&modestbranding=1&showinfo=0&autoplay=1&controls=1`,
+            // youtube-nocookie with maximum kid safety params
+            embedUrl: `https://www.youtube-nocookie.com/embed/${youtubeId}?rel=0&modestbranding=1&showinfo=0&autoplay=1&controls=1&iv_load_policy=3&disablekb=1&loop=1&playlist=${youtubeId}`,
             thumbnailUrl: `https://img.youtube.com/vi/${youtubeId}/hqdefault.jpg`,
         };
     }
@@ -38,9 +68,8 @@ export function parseVideoUrl(url: string): ParsedVideoUrl {
             platform: 'instagram',
             videoId: instagramId,
             originalUrl: trimmedUrl,
-            // Instagram embed requires specific format - use blockquote embed approach
             embedUrl: `https://www.instagram.com/p/${instagramId}/embed/?hidecaption=1`,
-            thumbnailUrl: null, // Instagram requires oEmbed API for thumbnails
+            thumbnailUrl: null,
         };
     }
 
@@ -52,7 +81,7 @@ export function parseVideoUrl(url: string): ParsedVideoUrl {
             videoId: tiktokData.videoId,
             originalUrl: trimmedUrl,
             embedUrl: `https://www.tiktok.com/embed/v2/${tiktokData.videoId}`,
-            thumbnailUrl: null, // TikTok requires oEmbed API for thumbnails
+            thumbnailUrl: null,
         };
     }
 
@@ -63,7 +92,7 @@ export function parseVideoUrl(url: string): ParsedVideoUrl {
             platform: 'twitter',
             videoId: twitterId,
             originalUrl: trimmedUrl,
-            embedUrl: null, // Twitter videos need special handling via their embed widget
+            embedUrl: null,
             thumbnailUrl: null,
         };
     }
@@ -80,7 +109,6 @@ export function parseVideoUrl(url: string): ParsedVideoUrl {
         };
     }
 
-    // Unknown platform
     return {
         platform: 'unknown',
         videoId: '',
@@ -91,12 +119,12 @@ export function parseVideoUrl(url: string): ParsedVideoUrl {
 }
 
 /**
- * Extract YouTube video ID from various URL formats
+ * Extract YouTube video ID from various URL formats (watch, youtu.be, shorts, embed)
  */
-function extractYouTubeId(url: string): string | null {
+export function extractYouTubeId(url: string): string | null {
     const patterns = [
-        /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/embed\/|youtube\.com\/v\/|youtube\.com\/shorts\/)([a-zA-Z0-9_-]{11})/,
-        /^([a-zA-Z0-9_-]{11})$/, // Direct ID
+        /(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|v\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i,
+        /^([a-zA-Z0-9_-]{11})$/,
     ];
 
     for (const pattern of patterns) {
@@ -111,10 +139,10 @@ function extractYouTubeId(url: string): string | null {
 /**
  * Extract Instagram post/reel ID from URL
  */
-function extractInstagramId(url: string): string | null {
+export function extractInstagramId(url: string): string | null {
     const patterns = [
-        /instagram\.com\/(?:p|reel|reels|tv)\/([a-zA-Z0-9_-]+)/,
-        /instagr\.am\/p\/([a-zA-Z0-9_-]+)/,
+        /instagram\.com\/(?:p|reel|reels|tv)\/([a-zA-Z0-9_-]+)/i,
+        /instagr\.am\/p\/([a-zA-Z0-9_-]+)/i,
     ];
 
     for (const pattern of patterns) {
@@ -129,20 +157,18 @@ function extractInstagramId(url: string): string | null {
 /**
  * Extract TikTok video ID from URL
  */
-function extractTikTokId(url: string): { videoId: string; username?: string } | null {
+export function extractTikTokId(url: string): { videoId: string; username?: string } | null {
     const patterns = [
-        /tiktok\.com\/@([^\/]+)\/video\/(\d+)/,
-        /tiktok\.com\/t\/([a-zA-Z0-9]+)/,
-        /vm\.tiktok\.com\/([a-zA-Z0-9]+)/,
+        /tiktok\.com\/@([^\/]+)\/video\/(\d+)/i,
+        /tiktok\.com\/t\/([a-zA-Z0-9]+)/i,
+        /vm\.tiktok\.com\/([a-zA-Z0-9]+)/i,
     ];
 
-    // Full video URL pattern
     const fullMatch = url.match(patterns[0]);
     if (fullMatch && fullMatch[2]) {
         return { videoId: fullMatch[2], username: fullMatch[1] };
     }
 
-    // Short URL patterns
     for (let i = 1; i < patterns.length; i++) {
         const match = url.match(patterns[i]);
         if (match && match[1]) {
@@ -155,9 +181,9 @@ function extractTikTokId(url: string): { videoId: string; username?: string } | 
 /**
  * Extract Twitter/X video tweet ID from URL
  */
-function extractTwitterId(url: string): string | null {
+export function extractTwitterId(url: string): string | null {
     const patterns = [
-        /(?:twitter\.com|x\.com)\/[^\/]+\/status\/(\d+)/,
+        /(?:twitter\.com|x\.com)\/[^\/]+\/status\/(\d+)/i,
     ];
 
     for (const pattern of patterns) {
@@ -172,11 +198,11 @@ function extractTwitterId(url: string): string | null {
 /**
  * Extract Facebook video ID from URL
  */
-function extractFacebookId(url: string): string | null {
+export function extractFacebookId(url: string): string | null {
     const patterns = [
-        /facebook\.com\/.*\/videos\/(\d+)/,
-        /facebook\.com\/watch\/?\?v=(\d+)/,
-        /fb\.watch\/([a-zA-Z0-9_-]+)/,
+        /facebook\.com\/.*\/videos\/(\d+)/i,
+        /facebook\.com\/watch\/?\?v=(\d+)/i,
+        /fb\.watch\/([a-zA-Z0-9_-]+)/i,
     ];
 
     for (const pattern of patterns) {
@@ -189,34 +215,66 @@ function extractFacebookId(url: string): string | null {
 }
 
 /**
- * Fetch video metadata using oEmbed API (for platforms that support it)
+ * Fetch video metadata via backend extractor (yt-dlp) or oEmbed fallback
  */
-export async function fetchVideoMetadata(url: string): Promise<{
-    title?: string;
-    thumbnailUrl?: string;
-    authorName?: string;
-    duration?: number;
-}> {
-    const parsed = parseVideoUrl(url);
+export async function fetchVideoMetadata(urlInput: string): Promise<VideoMetadata> {
+    const cleanUrl = extractCleanUrl(urlInput);
+    const parsed = parseVideoUrl(cleanUrl);
 
+    // Tier 1: Try local HAEVN yt-dlp backend
     try {
-        // noembed.com supports multiple platforms
-        const oembedUrl = `https://noembed.com/embed?url=${encodeURIComponent(url)}`;
-        const response = await fetch(oembedUrl, { signal: AbortSignal.timeout(5000) });
+        const res = await fetch('http://localhost:9123/api/haevn/extract', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: cleanUrl }),
+            signal: AbortSignal.timeout(3000),
+        });
+
+        if (res.ok) {
+            const data = await res.json();
+            if (data.success) {
+                return {
+                    title: data.title,
+                    thumbnailUrl: data.thumbnailUrl || (parsed.platform === 'youtube' ? parsed.thumbnailUrl || undefined : undefined),
+                    authorName: data.uploader,
+                    duration: data.duration,
+                    description: data.description,
+                    realVideoId: data.videoId,
+                    directStreamUrl: data.directStreamUrl,
+                };
+            }
+        }
+    } catch (err) {
+        // Backend not available or timed out, proceed to Tier 2
+    }
+
+    // Tier 2: Try oEmbed
+    try {
+        const oembedUrl = `https://noembed.com/embed?url=${encodeURIComponent(cleanUrl)}`;
+        const response = await fetch(oembedUrl, { signal: AbortSignal.timeout(3000) });
 
         if (response.ok) {
             const data = await response.json();
+            let realVideoId: string | undefined = undefined;
+            if (data.html) {
+                const tiktokMatch = data.html.match(/data-video-id="(\d+)"/);
+                if (tiktokMatch && tiktokMatch[1]) {
+                    realVideoId = tiktokMatch[1];
+                }
+            }
+
             return {
                 title: data.title,
-                thumbnailUrl: data.thumbnail_url,
+                thumbnailUrl: data.thumbnail_url || (parsed.platform === 'youtube' ? parsed.thumbnailUrl || undefined : undefined),
                 authorName: data.author_name,
+                realVideoId,
             };
         }
     } catch (error) {
-        console.warn('Failed to fetch oEmbed metadata:', error);
+        // oEmbed failed
     }
 
-    // Platform-specific fallbacks
+    // Tier 3: Static fallback
     if (parsed.platform === 'youtube' && parsed.thumbnailUrl) {
         return { thumbnailUrl: parsed.thumbnailUrl };
     }
@@ -244,5 +302,5 @@ export function getPlatformDisplayName(platform: VideoPlatform): string {
         facebook: 'Facebook',
         unknown: 'Unknown',
     };
-    return names[platform];
+    return names[platform] || 'Video';
 }

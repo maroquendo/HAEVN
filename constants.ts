@@ -37,3 +37,5 @@ export const MOCK_FAMILIES: Family[] = [
     ]
   },
 ];
+
+export const MASTER_EMAIL = 'equinoxio@gmail.com';

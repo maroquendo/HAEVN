@@ -22,12 +22,14 @@ const firebaseConfig = {
     measurementId: "G-HMS4C6BQ2J"
 };
 
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore, persistentLocalCache } from 'firebase/firestore';
 
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
-export const db = getFirestore(app);
+export const db = initializeFirestore(app, {
+    localCache: persistentLocalCache()
+});
 const googleProvider = new GoogleAuthProvider();
 
 // ==================== GOOGLE AUTH ====================

@@ -30,3 +30,9 @@ export const sendInviteEmail = async (to: string, familyName: string, inviteLink
     // In a real app, this would make an API call to a backend service.
     return Promise.resolve();
 };
+
+export const getMailtoLink = (to: string, familyName: string, inviteLink: string): string => {
+    const subject = encodeURIComponent(`Join ${familyName} on HAEVN`);
+    const body = encodeURIComponent(`You have been invited to join the family "${familyName}" on HAEVN.\n\nClick the link below to accept the invitation:\n${inviteLink}`);
+    return `mailto:${to}?subject=${subject}&body=${body}`;
+};

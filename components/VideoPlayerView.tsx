@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Video, Comment, ReactionType, User, ChatMessage, VideoPlatform } from '../types';
+import { Video, Comment, ReactionType, User, ChatMessage, VideoPlatform, ParentalControls } from '../types';
 import { LoveIcon, DislikeIcon, SendIcon, CloseIcon, RobotIcon, InfoIcon, TrashIcon } from './icons';
 import { getVideoChatResponse, AI_UNSURE_RESPONSE } from '../services/geminiService';
+import { getCachedVideoUrl, cacheVideo } from '../services/mediaCacheService';
 import clsx from 'clsx';
 import { motion } from 'framer-motion';
 
@@ -9,6 +10,8 @@ declare global {
   interface Window {
     onYouTubeIframeAPIReady: () => void;
     YT: any;
+    SpeechRecognition: any;
+    webkitSpeechRecognition: any;
   }
 }
 
@@ -20,27 +23,35 @@ interface VideoPlayerViewProps {
   onAiHelpRequest: (video: Video) => void;
   currentUser: User;
   onDeleteVideo: (videoId: string) => void;
+  parentalControls: ParentalControls;
 }
 
-type PlayerMode = 'youtube' | 'instagram' | 'tiktok' | 'twitter' | 'facebook' | 'loading_fallback' | 'fallback_video' | 'fallback_iframe' | 'error';
+type PlayerMode = 'local' | 'youtube' | 'instagram' | 'tiktok' | 'twitter' | 'facebook' | 'loading_fallback' | 'fallback_video' | 'fallback_iframe' | 'error';
 
-// Helper function to shuffle an array
-const shuffleArray = <T,>(array: T[]): T[] => {
-  const newArray = [...array];
-  for (let i = newArray.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
-  }
-  return newArray;
-};
-
-
-const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpdateVideo, onTimeUpdate, onAiHelpRequest, currentUser, onDeleteVideo }) => {
+const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({
+  video,
+  onClose,
+  onUpdateVideo,
+  onTimeUpdate,
+  onAiHelpRequest,
+  currentUser,
+  onDeleteVideo,
+  parentalControls
+}) => {
   const [newComment, setNewComment] = useState('');
   const [localVideo, setLocalVideo] = useState<Video>(video);
+  const [cachedStreamUrl, setCachedStreamUrl] = useState<string | null>(null);
 
-  // Determine initial player mode based on platform
+  // Voice Interaction States for Sparky (100% Free Web Speech API)
+  const [isVoiceEnabled, setIsVoiceEnabled] = useState(true);
+  const [isListening, setIsListening] = useState(false);
+  const [speechSupported, setSpeechSupported] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
   const getInitialPlayerMode = (): PlayerMode => {
+    if ((video.playbackMode === 'local' && video.localVideoUrl) || cachedStreamUrl) {
+      return 'local';
+    }
     const platform = video.platform || 'youtube';
     if (platform === 'instagram') return 'instagram';
     if (platform === 'tiktok') return 'tiktok';
@@ -56,13 +67,17 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
   const commentsEndRef = useRef<null | HTMLDivElement>(null);
   const chatEndRef = useRef<null | HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
+  const nativeVideoRef = useRef<HTMLVideoElement | null>(null);
   const watchIntervalRef = useRef<number | null>(null);
 
   const [activeTab, setActiveTab] = useState<'chat' | 'comments'>('chat');
   const [chatInput, setChatInput] = useState('');
   const [isAiThinking, setIsAiThinking] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [isVideoEnded, setIsVideoEnded] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [totalDuration, setTotalDuration] = useState(video.totalDuration || 0);
 
-  // Child users should not see comments - only AI chat
   const isChild = currentUser.role === 'child';
 
   const startWatchTimer = () => {
@@ -70,7 +85,7 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
     watchIntervalRef.current = window.setInterval(() => {
       onTimeUpdate(1);
       setLocalVideo(prev => {
-        const newDuration = prev.watchDuration < prev.totalDuration ? prev.watchDuration + 1 : prev.watchDuration;
+        const newDuration = prev.watchDuration + 1;
         const updated = { ...prev, watchDuration: newDuration };
         onUpdateVideo(updated);
         return updated;
@@ -85,109 +100,45 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
     }
   };
 
-  const PIPED_INSTANCES = [
-    'https://pipedapi.kavin.rocks',
-    'https://pipedapi.drgns.space',
-    'https://pipedapi.privacydev.net',
-  ];
+  const togglePlayPause = () => {
+    if (playerMode === 'local' && nativeVideoRef.current) {
+      if (nativeVideoRef.current.paused) {
+        nativeVideoRef.current.play();
+        setIsPlaying(true);
+        setIsVideoEnded(false);
+      } else {
+        nativeVideoRef.current.pause();
+        setIsPlaying(false);
+      }
+      return;
+    }
 
-  const INVIDIOUS_INSTANCES = [
-    'https://vid.puffyan.us',
-    'https://iv.ggtyler.dev',
-    'https://inv.odyssey346.dev',
-  ];
-
-  const fetchWithTimeout = async (url: string, options: RequestInit = {}, timeout = 2000) => {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), timeout);
-    try {
-      const response = await fetch(url, {
-        ...options,
-        signal: controller.signal
-      });
-      clearTimeout(id);
-      return response;
-    } catch (error) {
-      clearTimeout(id);
-      throw error;
+    if (playerRef.current) {
+      try {
+        const state = playerRef.current.getPlayerState();
+        if (state === 1) {
+          playerRef.current.pauseVideo();
+          setIsPlaying(false);
+        } else {
+          playerRef.current.playVideo();
+          setIsPlaying(true);
+          setIsVideoEnded(false);
+        }
+      } catch (e) {
+        setIsPlaying(prev => !prev);
+      }
     }
   };
 
-  const fetchAndPlayFallback = async () => {
-    let lastError: Error | null = null;
-
-    console.log("Starting fallback process...");
-
-    // --- Tier 1: Try Piped Instances (direct video stream) ---
-    console.log("Fallback Tier 1: Attempting Piped instances...");
-    const shuffledPiped = shuffleArray(PIPED_INSTANCES);
-    for (const instance of shuffledPiped) {
-      if (playerMode !== 'loading_fallback') return;
-
+  const handleSkip = (seconds: number) => {
+    if (playerMode === 'local' && nativeVideoRef.current) {
+      nativeVideoRef.current.currentTime = Math.max(0, Math.min(nativeVideoRef.current.duration || 0, nativeVideoRef.current.currentTime + seconds));
+    } else if (playerRef.current && playerRef.current.getCurrentTime) {
       try {
-        const apiUrl = `${instance}/streams/${video.id}`;
-        const response = await fetchWithTimeout(apiUrl);
-        if (!response.ok) {
-          lastError = new Error(`Piped service at ${instance} responded with status ${response.status}`);
-          continue;
-        }
-        const data = await response.json();
-        const videoStream = data.videoStreams?.find((s: any) => s.quality === '720p' && s.format === 'WEBM') || data.videoStreams?.[0];
-        if (videoStream && videoStream.url) {
-          const streamUrl = new URL(videoStream.url, instance).toString();
-          console.log(`Success with Piped instance: ${instance}`);
-          setFallbackStreamUrl(streamUrl);
-          setPlayerMode('fallback_video');
-          return; // Success!
-        }
-      } catch (err) {
-        console.warn(`Error with Piped instance ${instance}:`, err);
-        lastError = err as Error;
-      }
+        const current = playerRef.current.getCurrentTime();
+        playerRef.current.seekTo(Math.max(0, current + seconds), true);
+      } catch (e) {}
     }
-
-    // --- Tier 2: Try Invidious API (direct video stream) ---
-    console.log("Fallback Tier 2: Piped failed, attempting Invidious API...");
-    const shuffledInvidious = shuffleArray(INVIDIOUS_INSTANCES);
-    for (const instance of shuffledInvidious) {
-      if (playerMode !== 'loading_fallback') return;
-
-      try {
-        const apiUrl = `${instance}/api/v1/videos/${video.id}`;
-        const response = await fetchWithTimeout(apiUrl);
-        if (!response.ok) {
-          lastError = new Error(`Invidious API at ${instance} responded with status ${response.status}`);
-          continue;
-        }
-        const data = await response.json();
-        // Find a 720p mp4 stream, or fallback to any
-        const stream = data.formatStreams?.find((s: any) => s.qualityLabel === '720p' && s.container === 'mp4') || data.formatStreams?.[0];
-        if (stream && stream.url) {
-          console.log(`Success with Invidious API instance: ${instance}`);
-          setFallbackStreamUrl(stream.url); // URL is absolute
-          setPlayerMode('fallback_video');
-          return; // Success!
-        }
-      } catch (err) {
-        console.warn(`Error with Invidious API instance ${instance}:`, err);
-        lastError = err as Error;
-      }
-    }
-
-    // --- Tier 3: Try Invidious Instances (iframe embed) ---
-    console.log("Fallback Tier 3: All fetch attempts failed, trying Invidious iframe embed...");
-    if (shuffledInvidious.length > 0) {
-      const instance = shuffledInvidious[0];
-      const embedUrl = `${instance}/embed/${video.id}?autoplay=1`;
-      console.log(`Using Invidious embed fallback: ${embedUrl}`);
-      setFallbackStreamUrl(embedUrl);
-      setPlayerMode('fallback_iframe');
-      return; // Set the iframe and hope for the best.
-    }
-
-    // If all tiers fail
-    setErrorMessage("Unable to play video from any source.");
-    setPlayerMode('error');
   };
 
   // YouTube Player Initialization
@@ -203,22 +154,31 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
     const onPlayerStateChange = (event: any) => {
       if (!window.YT) return;
       if (event.data === window.YT.PlayerState.PLAYING) {
+        setIsPlaying(true);
+        setIsVideoEnded(false);
         startWatchTimer();
+      } else if (event.data === window.YT.PlayerState.ENDED) {
+        setIsPlaying(false);
+        setIsVideoEnded(true);
+        stopWatchTimer();
+        try {
+          event.target.seekTo(0);
+          event.target.pauseVideo();
+        } catch (e) {}
       } else {
+        setIsPlaying(false);
         stopWatchTimer();
       }
     };
 
     const onPlayerError = (event: any) => {
-      console.log("YouTube Player Error:", event.data);
-      if (isMounted) setPlayerMode('loading_fallback');
+      console.warn("YouTube Player encountered an issue:", event.data);
     };
 
     const loadPlayer = () => {
       if (playerRef.current) return;
       if (!document.getElementById('youtube-player-container')) return;
 
-      // Use youtube-nocookie.com for privacy-enhanced mode
       playerRef.current = new window.YT.Player('youtube-player-container', {
         videoId: video.id,
         host: 'https://www.youtube-nocookie.com',
@@ -230,14 +190,16 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
         playerVars: {
           'autoplay': 1,
           'controls': 1,
-          'rel': 0,  // Disable related videos from other channels
-          'modestbranding': 1,  // Minimal YouTube branding
-          'disablekb': isChild ? 1 : 0, // Disable keyboard controls for children
-          'fs': 1, // Allow fullscreen
-          'iv_load_policy': 3, // Disable video annotations
-          'showinfo': 0, // Don't show video title/uploader
-          'cc_load_policy': 0, // Don't load captions by default
-          'origin': window.location.origin, // For security
+          'rel': 0,
+          'modestbranding': 1,
+          'disablekb': isChild ? 1 : 0,
+          'fs': 1,
+          'iv_load_policy': 3,
+          'showinfo': 0,
+          'cc_load_policy': 0,
+          'origin': window.location.origin,
+          'loop': 1,
+          'playlist': video.id,
         }
       });
     };
@@ -245,17 +207,9 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
     if (window.YT && window.YT.Player) {
       loadPlayer();
     } else {
-      // Wait for API or global callback? 
-      // Assuming API is loaded in index.html. If not, we might need to load it.
-      // For now, if not present, try fallback immediately or wait a bit?
-      // Let's try fallback if not present after a timeout.
       const timer = setTimeout(() => {
-        if (isMounted && (!window.YT || !window.YT.Player)) {
-          setPlayerMode('loading_fallback');
-        } else {
-          loadPlayer();
-        }
-      }, 1000);
+        loadPlayer();
+      }, 500);
       return () => clearTimeout(timer);
     }
 
@@ -268,13 +222,6 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
       }
     };
   }, [video.id, playerMode, isChild]);
-
-  // Fallback Trigger
-  useEffect(() => {
-    if (playerMode === 'loading_fallback') {
-      fetchAndPlayFallback();
-    }
-  }, [playerMode]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -299,6 +246,125 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
     const updatedVideo = { ...localVideo, reactions: updatedReactions, userReaction: updatedUserReaction };
     setLocalVideo(updatedVideo);
     onUpdateVideo(updatedVideo);
+  };
+
+  // Check for offline cached video stream or cache it in the background
+  useEffect(() => {
+    let isMounted = true;
+    const initMediaCache = async () => {
+      try {
+        const cachedUrl = await getCachedVideoUrl(video.id);
+        if (cachedUrl && isMounted) {
+          setCachedStreamUrl(cachedUrl);
+          setPlayerMode('local');
+        } else if (video.localVideoUrl) {
+          // Cache in background for offline tablet playback
+          cacheVideo(video.id, video.localVideoUrl, video.title).catch(() => {});
+        }
+      } catch (e) {
+        console.warn('Cache lookup failed:', e);
+      }
+    };
+    initMediaCache();
+    return () => { isMounted = false; };
+  }, [video.id, video.localVideoUrl, video.title]);
+
+  // Setup Web Speech API for voice Q&A (100% Free on iPad Safari and Android)
+  useEffect(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      setSpeechSupported(true);
+      try {
+        const recognition = new SpeechRecognition();
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        recognition.lang = 'en-US';
+
+        recognition.onstart = () => {
+          setIsListening(true);
+        };
+
+        recognition.onresult = (event: any) => {
+          const transcript = event.results[0][0]?.transcript;
+          if (transcript) {
+            setChatInput(transcript);
+            handleDirectVoiceSubmit(transcript);
+          }
+        };
+
+        recognition.onerror = (event: any) => {
+          console.warn('Speech recognition error:', event.error);
+          setIsListening(false);
+        };
+
+        recognition.onend = () => {
+          setIsListening(false);
+        };
+
+        recognitionRef.current = recognition;
+      } catch (err) {
+        console.warn('SpeechRecognition initialization error:', err);
+      }
+    }
+  }, []);
+
+  const toggleListening = () => {
+    if (!recognitionRef.current) return;
+    if (isListening) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+    } else {
+      try {
+        recognitionRef.current.start();
+      } catch (e) {
+        console.warn('Failed to start voice recognition:', e);
+      }
+    }
+  };
+
+  const speakSparkyResponse = (text: string) => {
+    if (!isVoiceEnabled || !('speechSynthesis' in window)) return;
+    try {
+      window.speechSynthesis.cancel();
+      const cleanText = text.replace(/[\*\#\_]/g, '');
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      utterance.pitch = 1.15; // Friendly, warm kid tone
+      utterance.rate = 0.95; // Gentle pace
+      window.speechSynthesis.speak(utterance);
+    } catch (e) {
+      console.warn('Speech synthesis error:', e);
+    }
+  };
+
+  const handleDirectVoiceSubmit = async (spokenText: string) => {
+    if (!spokenText.trim() || isAiThinking) return;
+
+    const userMessage: ChatMessage = { id: `user_${Date.now()}`, author: 'user', text: spokenText };
+    const aiThinkingMessage: ChatMessage = { id: `ai_${Date.now()}`, author: 'ai', text: '', isLoading: true };
+
+    const currentChatHistory = localVideo.chatHistory || [];
+    const updatedHistory = [...currentChatHistory, userMessage, aiThinkingMessage];
+
+    const updatedVideo = { ...localVideo, chatHistory: updatedHistory };
+    setLocalVideo(updatedVideo);
+    onUpdateVideo(updatedVideo);
+    setChatInput('');
+    setIsAiThinking(true);
+
+    const aiResponseText = await getVideoChatResponse(video.title, video.summary, currentChatHistory, spokenText);
+
+    if (aiResponseText.trim() === AI_UNSURE_RESPONSE && currentUser.role === 'child') {
+      onAiHelpRequest(video);
+    }
+
+    const finalAiMessage: ChatMessage = { ...aiThinkingMessage, text: aiResponseText, isLoading: false };
+    const finalHistory = [...currentChatHistory, userMessage, finalAiMessage];
+    const finalVideoUpdate = { ...localVideo, chatHistory: finalHistory };
+    setLocalVideo(finalVideoUpdate);
+    onUpdateVideo(finalVideoUpdate);
+    setIsAiThinking(false);
+
+    speakSparkyResponse(aiResponseText);
   };
 
   const handleAddComment = (e: React.FormEvent) => {
@@ -347,21 +413,20 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
     setLocalVideo(finalVideoUpdate);
     onUpdateVideo(finalVideoUpdate);
     setIsAiThinking(false);
+
+    speakSparkyResponse(aiResponseText);
   };
 
   const handleDeleteClick = () => {
     onDeleteVideo(video.id);
   };
 
-  // Get the safe embed URL for the platform
   const getSafeEmbedUrl = (): string => {
     if (video.embedUrl) return video.embedUrl;
-
     const platform = video.platform || 'youtube';
 
     switch (platform) {
       case 'youtube':
-        // Privacy-enhanced YouTube embed with restricted parameters
         return `https://www.youtube-nocookie.com/embed/${video.id}?rel=0&modestbranding=1&showinfo=0&autoplay=1&controls=1&iv_load_policy=3`;
       case 'instagram':
         return `https://www.instagram.com/p/${video.id}/embed/?hidecaption=1`;
@@ -375,50 +440,201 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
   };
 
   const renderPlayer = () => {
+    // 1. Clean Native MP4 Stream Playback (Cached Blob or Server Range Stream)
+    const activeStreamUrl = cachedStreamUrl || video.localVideoUrl;
+    if (activeStreamUrl || playerMode === 'local') {
+      return (
+        <div className="relative w-full h-full bg-black flex items-center justify-center group overflow-hidden">
+          <video
+            ref={nativeVideoRef}
+            src={activeStreamUrl || undefined}
+            autoPlay
+            playsInline
+            onPlay={() => {
+              setIsPlaying(true);
+              setIsVideoEnded(false);
+              startWatchTimer();
+            }}
+            onPause={() => {
+              setIsPlaying(false);
+              stopWatchTimer();
+            }}
+            onEnded={() => {
+              setIsPlaying(false);
+              setIsVideoEnded(true);
+              stopWatchTimer();
+            }}
+            onTimeUpdate={(e) => {
+              const el = e.currentTarget;
+              setCurrentTime(el.currentTime);
+              if (el.duration && !isNaN(el.duration)) {
+                setTotalDuration(el.duration);
+              }
+            }}
+            className="w-full h-full object-contain cursor-pointer"
+            onClick={togglePlayPause}
+            aria-label="Clean Video Player"
+          />
+
+          {/* Quick 10s Skip Buttons & Center Play/Pause */}
+          {!isPlaying && !isVideoEnded && (
+            <div 
+              className="absolute inset-0 z-10 bg-black/30 flex items-center justify-center cursor-pointer"
+              onClick={togglePlayPause}
+            >
+              <div className="p-5 rounded-full bg-black/60 text-white backdrop-blur-sm shadow-xl border border-white/20 transition transform hover:scale-110 flex items-center justify-center">
+                <svg className="w-12 h-12 ml-1" fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M8 5v14l11-7z" />
+                </svg>
+              </div>
+            </div>
+          )}
+
+          {/* Replay Screen */}
+          {isVideoEnded && (
+            <div className="absolute inset-0 bg-black/90 z-20 flex flex-col items-center justify-center p-6 text-center animate-fade-in backdrop-blur-md">
+              <h3 className="text-2xl font-bold text-white mb-2">Hope you enjoyed the video! 🌟</h3>
+              <p className="text-gray-400 text-sm mb-6 max-w-sm">Ask Sparky questions on the sidebar or watch it again.</p>
+              <button
+                onClick={() => {
+                  if (nativeVideoRef.current) {
+                    nativeVideoRef.current.currentTime = 0;
+                    nativeVideoRef.current.play();
+                  }
+                  setIsVideoEnded(false);
+                  setIsPlaying(true);
+                }}
+                className="flex items-center gap-2 px-6 py-3 bg-brand-500 hover:bg-brand-600 text-white font-bold rounded-2xl transition transform hover:scale-105 shadow-lg shadow-brand-500/20"
+                title="Watch again"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                </svg>
+                Watch Again
+              </button>
+            </div>
+          )}
+
+          {/* Custom Controls Bar */}
+          <div className="absolute bottom-0 inset-x-0 p-3 bg-gradient-to-t from-black/80 to-transparent z-10 flex items-center justify-between text-white opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="flex items-center gap-3">
+              <button onClick={togglePlayPause} className="p-1.5 hover:bg-white/20 rounded-lg transition" title={isPlaying ? "Pause" : "Play"}>
+                {isPlaying ? (
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                ) : (
+                  <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                )}
+              </button>
+              <button onClick={() => handleSkip(-10)} className="p-1.5 hover:bg-white/20 rounded-lg transition text-xs font-bold" title="Rewind 10s">
+                -10s
+              </button>
+              <button onClick={() => handleSkip(10)} className="p-1.5 hover:bg-white/20 rounded-lg transition text-xs font-bold" title="Forward 10s">
+                +10s
+              </button>
+              <span className="text-xs font-medium text-gray-300">
+                {Math.floor(currentTime / 60)}:{(Math.floor(currentTime % 60)).toString().padStart(2, '0')} / {Math.floor(totalDuration / 60)}:{(Math.floor(totalDuration % 60)).toString().padStart(2, '0')}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button 
+                onClick={() => {
+                  if (nativeVideoRef.current) {
+                    if (nativeVideoRef.current.requestFullscreen) nativeVideoRef.current.requestFullscreen();
+                  }
+                }}
+                className="p-1.5 hover:bg-white/20 rounded-lg transition"
+                title="Fullscreen"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" /></svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // 2. Fortified Sandboxed Embed Mode
     switch (playerMode) {
       case 'youtube':
-        return <div id="youtube-player-container" className="w-full h-full"></div>;
+        return (
+          <div className="relative w-full h-full bg-black overflow-hidden flex items-center justify-center">
+            <div id="youtube-player-container" className="w-full h-full pointer-events-none"></div>
+            
+            <div 
+              className="absolute inset-0 z-10 bg-transparent flex items-center justify-center cursor-pointer group"
+              onClick={togglePlayPause}
+            >
+              {!isPlaying && !isVideoEnded && (
+                <div className="p-5 rounded-full bg-black/60 text-white backdrop-blur-sm transition-transform scale-100 group-hover:scale-110 shadow-lg border border-white/10 flex items-center justify-center">
+                  <svg className="w-12 h-12 ml-1" fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M8 5v14l11-7z" />
+                  </svg>
+                </div>
+              )}
+
+              {isVideoEnded && (
+                <div className="absolute inset-0 bg-black/90 z-20 flex flex-col items-center justify-center p-6 text-center animate-fade-in backdrop-blur-md">
+                  <h3 className="text-2xl font-bold text-white mb-2">Hope you enjoyed the video! 🌟</h3>
+                  <p className="text-gray-400 text-sm mb-6 max-w-sm">Ask Sparky questions on the sidebar or watch it again.</p>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      togglePlayPause();
+                    }}
+                    className="flex items-center gap-2 px-6 py-3 bg-brand-500 hover:bg-brand-600 text-white font-bold rounded-2xl transition transform hover:scale-105 shadow-lg shadow-brand-500/20"
+                    title="Watch again"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                    </svg>
+                    Watch Again
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
 
       case 'instagram':
         return (
-          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400">
+          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-500 via-pink-500 to-orange-400 relative overflow-hidden">
             <iframe
               src={getSafeEmbedUrl()}
-              className="w-full h-full max-w-[400px] max-h-[700px] border-0"
+              className="w-full h-full max-w-[420px] max-h-[720px] border-0 pointer-events-none"
               allow="autoplay; encrypted-media"
               allowFullScreen
               title="Instagram Video"
               sandbox="allow-scripts allow-same-origin allow-presentation"
               onLoad={() => startWatchTimer()}
             />
+            <div className="absolute inset-0 z-10 bg-transparent cursor-default" />
           </div>
         );
 
       case 'tiktok':
         return (
-          <div className="w-full h-full flex items-center justify-center bg-black">
+          <div className="w-full h-full flex items-center justify-center bg-black relative overflow-hidden">
             <iframe
               src={getSafeEmbedUrl()}
-              className="w-full h-full max-w-[400px] border-0"
+              className="w-full h-full max-w-[420px] border-0 pointer-events-none"
               allow="autoplay; encrypted-media"
               allowFullScreen
               title="TikTok Video"
               sandbox="allow-scripts allow-same-origin allow-presentation"
               onLoad={() => startWatchTimer()}
             />
+            <div className="absolute inset-0 z-10 bg-transparent cursor-default" />
           </div>
         );
 
       case 'twitter':
         return (
-          <div className="w-full h-full flex items-center justify-center bg-black">
-            <div className="text-center text-white">
-              <InfoIcon className="mx-auto h-12 w-12 text-blue-400 mb-4" />
-              <h3 className="text-xl font-medium mb-2">Twitter/X Video</h3>
-              <p className="text-gray-300 mb-4">This video can be viewed in the player below.</p>
+          <div className="w-full h-full flex items-center justify-center bg-black relative overflow-hidden">
+            <div className="text-center text-white w-full h-full flex flex-col justify-center items-center">
               <iframe
                 src={`https://platform.twitter.com/embed/Tweet.html?id=${video.id}`}
-                className="w-full max-w-[500px] h-[400px] border-0 mx-auto"
+                className="w-full max-w-[500px] h-[400px] border-0 mx-auto pointer-events-none"
                 allow="autoplay; encrypted-media"
                 allowFullScreen
                 title="Twitter Video"
@@ -426,59 +642,26 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
                 onLoad={() => startWatchTimer()}
               />
             </div>
+            <div className="absolute inset-0 z-10 bg-transparent cursor-default" />
           </div>
         );
 
       case 'facebook':
         return (
-          <div className="w-full h-full flex items-center justify-center bg-[#1877F2]">
+          <div className="w-full h-full flex items-center justify-center bg-[#1877F2] relative overflow-hidden">
             <iframe
               src={getSafeEmbedUrl()}
-              className="w-full h-full border-0"
+              className="w-full h-full border-0 pointer-events-none"
               allow="autoplay; encrypted-media; fullscreen"
               allowFullScreen
               title="Facebook Video"
               sandbox="allow-scripts allow-same-origin allow-presentation"
               onLoad={() => startWatchTimer()}
             />
+            <div className="absolute inset-0 z-10 bg-transparent cursor-default" />
           </div>
         );
 
-      case 'loading_fallback':
-        return (
-          <div className="p-6 text-center flex flex-col items-center justify-center h-full">
-            <svg className="animate-spin h-12 w-12 text-brand-400" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <h3 className="mt-4 text-xl font-medium text-white">Let me try a little trick...</h3>
-            <p className="mt-2 text-sm text-gray-300">This video is being stubborn. Trying a workaround!</p>
-          </div>
-        );
-      case 'fallback_video':
-        return (
-          <video
-            src={fallbackStreamUrl!}
-            controls
-            autoPlay
-            onPlay={startWatchTimer}
-            onPause={stopWatchTimer}
-            onEnded={stopWatchTimer}
-            className="w-full h-full"
-            aria-label="Video player"
-          />
-        );
-      case 'fallback_iframe':
-        return (
-          <iframe
-            src={fallbackStreamUrl!}
-            allow="autoplay; encrypted-media; picture-in-picture"
-            allowFullScreen
-            className="w-full h-full border-0"
-            title="Fallback Video Player"
-            sandbox="allow-scripts allow-same-origin allow-presentation"
-          ></iframe>
-        );
       case 'error':
       default:
         return (
@@ -487,20 +670,27 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
             <h3 className="mt-2 text-xl font-medium text-white">Playback Problem</h3>
             <div className="mt-2 text-sm text-gray-300">
               <p>{errorMessage || "This video can't be played right now."}</p>
-              <p className="mt-2">Please try again later or contact support if the problem persists.</p>
+              <p className="mt-2">Please try again later or request your parent to re-share.</p>
             </div>
           </div>
         );
     }
   };
 
-  const watchPercentage = (localVideo.watchDuration / localVideo.totalDuration) * 100;
+  const watchPercentage = Math.min(100, (localVideo.watchDuration / (localVideo.totalDuration || 180)) * 100);
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-30 flex items-center justify-center p-4 animate-fade-in">
-      <div className="glass-panel rounded-3xl shadow-2xl w-full max-w-6xl h-full max-h-[90vh] flex flex-col overflow-hidden border border-white/10">
+      <div className="glass-panel rounded-3xl shadow-2xl w-full max-w-[96vw] h-[92vh] flex flex-col overflow-hidden border border-white/10">
         <div className="flex justify-between items-center p-5 border-b border-white/10 bg-white/5">
-          <h2 className="text-2xl font-bold text-gray-800 dark:text-white truncate">{video.title}</h2>
+          <div className="flex items-center gap-3 truncate">
+            {video.localVideoUrl && (
+              <span className="px-2.5 py-1 bg-green-500/20 text-green-400 text-xs font-bold rounded-lg border border-green-500/30 flex items-center gap-1">
+                <span>🛡️</span> Clean Ad-Free Stream
+              </span>
+            )}
+            <h2 className="text-2xl font-bold text-gray-800 dark:text-white truncate">{video.title}</h2>
+          </div>
           <button onClick={onClose} className="p-2 rounded-full hover:bg-white/10 text-gray-500 hover:text-gray-800 dark:hover:text-white transition" title="Close video player">
             <CloseIcon className="w-6 h-6" />
           </button>
@@ -508,11 +698,12 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
 
         <div className="flex-grow flex flex-col lg:flex-row overflow-hidden">
           {/* Video Section */}
-          <div className="w-full lg:w-2/3 p-6 flex flex-col overflow-y-auto custom-scrollbar">
+          <div className="w-full flex-1 p-6 flex flex-col overflow-y-auto custom-scrollbar bg-black/5">
             <div className="aspect-video w-full rounded-2xl overflow-hidden bg-black shadow-lg flex items-center justify-center text-white ring-1 ring-white/10">
               {renderPlayer()}
             </div>
-            <div className="mt-6">
+            
+            <div className="mt-6 max-w-5xl mx-auto w-full">
               <div className="flex items-center mb-4">
                 <img src={video.sender.avatarUrl} alt={video.sender.name} className="w-12 h-12 rounded-full mr-4 border-2 border-brand-200" />
                 <div>
@@ -522,7 +713,7 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
               <p className="text-gray-700 dark:text-gray-300 text-lg leading-relaxed">{video.summary}</p>
             </div>
 
-            <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700/50">
+            <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700/50 max-w-5xl mx-auto w-full">
               <h4 className="font-bold text-gray-800 dark:text-white mb-3">Your Reaction</h4>
               <div className="flex space-x-4">
                 <motion.button
@@ -556,9 +747,9 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
               </div>
             </div>
 
-            <div className="mt-6">
+            <div className="mt-6 max-w-5xl mx-auto w-full">
               <div className="flex justify-between items-end mb-2">
-                <h4 className="font-bold text-gray-800 dark:text-white">Progress</h4>
+                <h4 className="font-bold text-gray-800 dark:text-white">Watch Progress</h4>
                 <p className="text-sm font-medium text-gray-500 dark:text-gray-400">{Math.floor(localVideo.watchDuration / 60)}m {localVideo.watchDuration % 60}s watched</p>
               </div>
               <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-3 overflow-hidden">
@@ -572,7 +763,7 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
             </div>
 
             {currentUser.role === 'parent' && (
-              <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700/50">
+              <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700/50 max-w-5xl mx-auto w-full">
                 <h4 className="font-bold text-gray-800 dark:text-white mb-3">Admin Actions</h4>
                 <button
                   onClick={handleDeleteClick}
@@ -585,36 +776,59 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
             )}
           </div>
 
-          {/* Sidebar Section (Chat/Comments) - HIDE COMMENTS FOR CHILDREN */}
-          <div className="w-full lg:w-1/3 border-t lg:border-t-0 lg:border-l border-gray-200 dark:border-gray-700/50 flex flex-col h-full bg-gray-50/50 dark:bg-black/20">
-            {/* Tab buttons - Only show Comments tab to parents */}
-            <div className="flex border-b border-gray-200 dark:border-gray-700/50 p-2">
-              <button
-                onClick={() => setActiveTab('chat')}
-                className={clsx(
-                  "flex-1 p-3 rounded-xl font-bold text-sm transition-all",
-                  activeTab === 'chat'
-                    ? 'bg-white dark:bg-gray-800 text-brand-600 dark:text-brand-400 shadow-sm'
-                    : 'text-gray-500 hover:bg-white/50 dark:hover:bg-white/5'
-                )}
-              >
-                AI Chat
-              </button>
-              {/* Only show Comments tab for parents */}
-              {!isChild && (
+          {/* Sidebar Section (Sparky AI Chat / Parent Comments) */}
+          <div className="w-full lg:w-[400px] lg:flex-none border-t lg:border-t-0 lg:border-l border-gray-200 dark:border-gray-700/50 flex flex-col h-full bg-gray-50/50 dark:bg-black/20">
+            <div className="flex border-b border-gray-200 dark:border-gray-700/50 p-2 items-center justify-between">
+              <div className="flex flex-1 space-x-1">
                 <button
-                  onClick={() => setActiveTab('comments')}
+                  onClick={() => setActiveTab('chat')}
                   className={clsx(
-                    "flex-1 p-3 rounded-xl font-bold text-sm transition-all",
-                    activeTab === 'comments'
+                    "flex-1 p-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2",
+                    activeTab === 'chat'
                       ? 'bg-white dark:bg-gray-800 text-brand-600 dark:text-brand-400 shadow-sm'
                       : 'text-gray-500 hover:bg-white/50 dark:hover:bg-white/5'
                   )}
                 >
-                  Comments
+                  <span>🤖</span> Ask Sparky AI
+                </button>
+                {!isChild && (
+                  <button
+                    onClick={() => setActiveTab('comments')}
+                    className={clsx(
+                      "flex-1 p-3 rounded-xl font-bold text-sm transition-all",
+                      activeTab === 'comments'
+                        ? 'bg-white dark:bg-gray-800 text-brand-600 dark:text-brand-400 shadow-sm'
+                        : 'text-gray-500 hover:bg-white/50 dark:hover:bg-white/5'
+                    )}
+                  >
+                    Family Notes
+                  </button>
+                )}
+              </div>
+
+              {activeTab === 'chat' && (
+                <button
+                  onClick={() => {
+                    setIsVoiceEnabled(!isVoiceEnabled);
+                    if (isVoiceEnabled && 'speechSynthesis' in window) {
+                      window.speechSynthesis.cancel();
+                    }
+                  }}
+                  title={isVoiceEnabled ? "Mute Sparky's Voice" : "Enable Sparky's Voice"}
+                  className="p-2 ml-2 text-gray-500 hover:text-brand-600 hover:bg-white dark:hover:bg-gray-800 rounded-xl transition text-base flex items-center gap-1 text-xs font-bold"
+                >
+                  <span>{isVoiceEnabled ? '🔊' : '🔇'}</span>
+                  <span className="hidden sm:inline text-[11px] text-gray-400">{isVoiceEnabled ? 'Voice On' : 'Muted'}</span>
                 </button>
               )}
             </div>
+
+            {isListening && (
+              <div className="px-4 py-2 bg-gradient-to-r from-rose-500/15 to-orange-500/15 border-b border-rose-500/20 flex items-center justify-center gap-2 text-xs font-extrabold text-rose-500 animate-pulse">
+                <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+                Listening to you... Speak to Sparky!
+              </div>
+            )}
 
             <div className="flex-grow overflow-y-auto p-4 space-y-4 custom-scrollbar">
               {activeTab === 'chat' ? (
@@ -649,7 +863,6 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
                   <div ref={chatEndRef} />
                 </>
               ) : (
-                // Only render Comments section for parents (additional safety check)
                 !isChild && (
                   <>
                     {localVideo.comments.map(comment => (
@@ -676,20 +889,39 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
               )}
             </div>
 
-            {/* Input - Only show comments input for parents */}
             <div className="p-4 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700">
               <form onSubmit={activeTab === 'chat' ? handleSendChatMessage : handleAddComment} className="flex items-center space-x-2">
+                {activeTab === 'chat' && speechSupported && (
+                  <button
+                    type="button"
+                    onClick={toggleListening}
+                    title={isListening ? "Listening... (Tap to stop)" : "Speak to Sparky (Tap to speak)"}
+                    className={clsx(
+                      "p-3 rounded-xl transition-all flex items-center justify-center flex-shrink-0",
+                      isListening
+                        ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/40'
+                        : 'bg-brand-50 hover:bg-brand-100 dark:bg-gray-700 dark:hover:bg-gray-600 text-brand-600 dark:text-brand-300'
+                    )}
+                  >
+                    <span className="text-lg">{isListening ? '🔴' : '🎙️'}</span>
+                  </button>
+                )}
                 <input
                   type="text"
                   value={activeTab === 'chat' ? chatInput : newComment}
                   onChange={(e) => activeTab === 'chat' ? setChatInput(e.target.value) : setNewComment(e.target.value)}
-                  placeholder={activeTab === 'chat' ? "Ask Sparky a question..." : "Add a comment..."}
-                  className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-700 rounded-xl border-2 border-transparent focus:border-brand-500 focus:bg-white dark:focus:bg-gray-800 focus:outline-none transition text-gray-800 dark:text-gray-200 placeholder-gray-400"
+                  placeholder={
+                    activeTab === 'chat'
+                      ? (isListening ? "Listening... speak now!" : "Ask Sparky about this video...")
+                      : "Add a private note..."
+                  }
+                  className="w-full px-4 py-3 bg-gray-100 dark:bg-gray-700 rounded-xl border border-transparent focus:border-brand-500 focus:bg-white dark:focus:bg-gray-800 focus:outline-none transition text-gray-800 dark:text-gray-200 placeholder-gray-400 text-sm"
                   disabled={activeTab === 'chat' && isAiThinking}
                 />
                 <button
                   type="submit"
-                  className="bg-brand-500 text-white p-3 rounded-xl hover:bg-brand-600 transition shadow-lg shadow-brand-500/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                  aria-label="Send message"
+                  className="bg-brand-500 text-white p-3 rounded-xl hover:bg-brand-600 transition shadow-lg shadow-brand-500/30 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
                   disabled={(activeTab === 'chat' && isAiThinking) || (activeTab === 'comments' && isChild)}
                 >
                   <SendIcon className="w-5 h-5" />
@@ -702,6 +934,5 @@ const VideoPlayerView: React.FC<VideoPlayerViewProps> = ({ video, onClose, onUpd
     </div>
   );
 };
-
 
 export default VideoPlayerView;

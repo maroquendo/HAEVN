@@ -1,7 +1,8 @@
 import React, { useState, useMemo } from 'react';
 import { Wish, User } from '../types';
 import WishCard from './WishCard';
-import { SendIcon } from './icons';
+import { SendIcon, SparkleIcon } from './icons';
+import { motion } from 'framer-motion';
 
 interface WishlistViewProps {
   wishes: Wish[];
@@ -10,7 +11,7 @@ interface WishlistViewProps {
   onFulfillWish: (wishId: string) => void;
   onRejectWish: (wishId: string) => void;
   onFindRecommendations: (wishId: string) => void;
-  onAddRecommendedVideo: (data: {url: string, title: string}) => void;
+  onAddRecommendedVideo: (data: { url: string, title: string }) => void;
 }
 
 const WishlistView: React.FC<WishlistViewProps> = (props) => {
@@ -29,54 +30,96 @@ const WishlistView: React.FC<WishlistViewProps> = (props) => {
   const fulfilledWishes = useMemo(() => wishes.filter(w => w.status === 'fulfilled'), [wishes]);
 
   return (
-    <div>
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-gray-800 dark:text-white">Video Wishlist</h2>
+    <div className="max-w-4xl mx-auto pb-24 md:pb-8">
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <h2 className="text-2xl sm:text-3xl font-extrabold text-gray-800 dark:text-white tracking-tight flex items-center gap-2">
+            <span>✨</span> Video Wishlist
+          </h2>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">
+            {currentUser.role === 'child'
+              ? 'Tell Mom or Dad what topics you want to learn about!'
+              : 'Review and grant video requests submitted by your children.'}
+          </p>
+        </div>
+
+        {pendingWishes.length > 0 && currentUser.role === 'parent' && (
+          <span className="text-xs font-extrabold px-3 py-1 rounded-full bg-rose-500 text-white shadow-sm animate-pulse">
+            {pendingWishes.length} pending
+          </span>
+        )}
       </div>
 
+      {/* Child Wish Submission Card */}
       {currentUser.role === 'child' && (
-        <div className="mb-8 bg-white dark:bg-gray-800 p-6 rounded-lg shadow-md">
-            <h3 className="text-lg font-semibold mb-3">Have a video you want to see?</h3>
-            <p className="text-gray-600 dark:text-gray-400 mb-4">Ask Mom or Dad to find it for you! Type what you're looking for below.</p>
-            <form onSubmit={handleAddWishSubmit} className="flex items-center space-x-2">
-                <input
-                    type="text"
-                    value={newWishText}
-                    onChange={(e) => setNewWishText(e.target.value)}
-                    placeholder="e.g., videos about dinosaurs"
-                    className="w-full p-3 bg-gray-100 dark:bg-gray-700 rounded-lg border-2 border-transparent focus:border-indigo-500 focus:outline-none transition text-gray-800 dark:text-gray-200"
-                />
-                <button type="submit" className="bg-indigo-600 text-white p-3 rounded-full hover:bg-indigo-700 transition" aria-label="Make a wish" title="Make a wish">
-                    <SendIcon className="w-5 h-5"/>
-                </button>
-            </form>
-        </div>
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="glass-panel p-6 sm:p-8 rounded-3xl shadow-xl border border-white/30 dark:border-white/10 mb-8 bg-gradient-to-br from-purple-500/10 via-pink-500/5 to-indigo-500/10"
+        >
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-2xl">🪄</span>
+            <h3 className="text-lg font-bold text-gray-800 dark:text-white">Make a Video Wish!</h3>
+          </div>
+          <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
+            Type anything you want to learn about (e.g. <em>"baby animals"</em>, <em>"how rockets fly"</em>, <em>"origami folding"</em>).
+          </p>
+          <form onSubmit={handleAddWishSubmit} className="flex items-center gap-2">
+            <input
+              type="text"
+              value={newWishText}
+              onChange={(e) => setNewWishText(e.target.value)}
+              placeholder="e.g. videos about sea turtles"
+              className="w-full px-4 py-3 bg-white/90 dark:bg-gray-800/90 rounded-2xl border border-purple-200 dark:border-purple-800/60 focus:border-purple-500 focus:ring-2 focus:ring-purple-200 focus:outline-none transition text-sm text-gray-800 dark:text-gray-100 shadow-inner placeholder-gray-400"
+            />
+            <button
+              type="submit"
+              disabled={!newWishText.trim()}
+              className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white p-3 rounded-2xl shadow-md shadow-purple-500/30 transition-transform active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed flex-shrink-0"
+              aria-label="Make a wish"
+              title="Make a wish"
+            >
+              <SendIcon className="w-5 h-5" />
+            </button>
+          </form>
+        </motion.div>
       )}
 
-      <div>
-        <h3 className="text-xl font-semibold mb-4 text-gray-700 dark:text-gray-300">
-            {currentUser.role === 'parent' ? 'Pending Requests' : 'Your Wishes'}
+      {/* Pending Section */}
+      <div className="mb-8">
+        <h3 className="text-base font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-3 px-1">
+          {currentUser.role === 'parent' ? 'Pending Requests' : 'Your Wishes'}
         </h3>
         {pendingWishes.length > 0 ? (
-            <div className="space-y-4">
-                {pendingWishes.map(wish => <WishCard key={wish.id} wish={wish} userRole={currentUser.role} {...props} />)}
-            </div>
+          <div className="space-y-4">
+            {pendingWishes.map(wish => (
+              <WishCard key={wish.id} wish={wish} userRole={currentUser.role} {...props} />
+            ))}
+          </div>
         ) : (
-            <p className="text-center text-gray-500 dark:text-gray-400 py-6 bg-gray-100 dark:bg-gray-800 rounded-lg">No pending wishes!</p>
+          <div className="glass-panel p-8 rounded-3xl text-center border border-white/20 dark:border-white/10 text-gray-500 dark:text-gray-400 text-sm">
+            🎉 No pending wishes right now!
+          </div>
         )}
       </div>
 
-       <div className="mt-12">
-        <h3 className="text-xl font-semibold mb-4 text-gray-700 dark:text-gray-300">Fulfilled Wishes</h3>
+      {/* Fulfilled Section */}
+      <div>
+        <h3 className="text-base font-bold uppercase tracking-wider text-gray-400 dark:text-gray-500 mb-3 px-1">
+          Fulfilled Wishes ({fulfilledWishes.length})
+        </h3>
         {fulfilledWishes.length > 0 ? (
-            <div className="space-y-4">
-                {fulfilledWishes.map(wish => <WishCard key={wish.id} wish={wish} userRole={currentUser.role} {...props} />)}
-            </div>
+          <div className="space-y-4">
+            {fulfilledWishes.map(wish => (
+              <WishCard key={wish.id} wish={wish} userRole={currentUser.role} {...props} />
+            ))}
+          </div>
         ) : (
-            <p className="text-center text-gray-500 dark:text-gray-400 py-6 bg-gray-100 dark:bg-gray-800 rounded-lg">No wishes have been fulfilled yet.</p>
+          <div className="glass-panel p-8 rounded-3xl text-center border border-white/20 dark:border-white/10 text-gray-500 dark:text-gray-400 text-sm">
+            No wishes have been fulfilled yet.
+          </div>
         )}
       </div>
-
     </div>
   );
 };

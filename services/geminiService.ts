@@ -1,7 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { RecommendedVideo, ChatMessage } from '../types';
 
-const API_KEY = process.env.API_KEY;
+const API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
 if (!API_KEY) {
   // In a real app, you'd handle this more gracefully.
@@ -49,47 +49,47 @@ export const generateVideoDescriptionFromTitle = async (title: string): Promise<
 
 
 const recommendationSchema = {
-    type: Type.ARRAY,
-    items: {
-      type: Type.OBJECT,
-      properties: {
-        videoId: {
-          type: Type.STRING,
-          description: 'The unique YouTube video ID.'
-        },
-        title: {
-          type: Type.STRING,
-          description: 'The title of the YouTube video.'
-        },
+  type: Type.ARRAY,
+  items: {
+    type: Type.OBJECT,
+    properties: {
+      videoId: {
+        type: Type.STRING,
+        description: 'The unique YouTube video ID.'
       },
-      required: ['videoId', 'title'],
+      title: {
+        type: Type.STRING,
+        description: 'The title of the YouTube video.'
+      },
     },
+    required: ['videoId', 'title'],
+  },
 };
 
 export const getRecommendedVideosForWish = async (wishText: string): Promise<RecommendedVideo[]> => {
-    if (!API_KEY) {
-        throw new Error("API key not configured.");
-    }
-    try {
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: `A child wants to watch videos about "${wishText}". Suggest 3 real, popular, and kid-friendly YouTube video titles and their YouTube video IDs. The videos should be generally appropriate for a family audience, but the parent will make the final decision.`,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: recommendationSchema,
-            },
-        });
-        
-        const jsonStr = response.text.trim();
-        // Sometimes the response might be wrapped in markdown
-        const cleanedJsonStr = jsonStr.replace(/^```json\n/, '').replace(/\n```$/, '');
-        const recommendations = JSON.parse(cleanedJsonStr);
-        return recommendations as RecommendedVideo[];
+  if (!API_KEY) {
+    throw new Error("API key not configured.");
+  }
+  try {
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: `A child wants to watch videos about "${wishText}". Suggest 3 real, popular, and kid-friendly YouTube video titles and their YouTube video IDs. The videos should be generally appropriate for a family audience, but the parent will make the final decision.`,
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: recommendationSchema,
+      },
+    });
 
-    } catch (error) {
-        console.error("Error getting video recommendations from Gemini:", error);
-        return [];
-    }
+    const jsonStr = response.text.trim();
+    // Sometimes the response might be wrapped in markdown
+    const cleanedJsonStr = jsonStr.replace(/^```json\n/, '').replace(/\n```$/, '');
+    const recommendations = JSON.parse(cleanedJsonStr);
+    return recommendations as RecommendedVideo[];
+
+  } catch (error) {
+    console.error("Error getting video recommendations from Gemini:", error);
+    return [];
+  }
 };
 
 export const getVideoChatResponse = async (videoTitle: string, videoSummary: string, chatHistory: ChatMessage[], userQuestion: string): Promise<string> => {
@@ -112,14 +112,14 @@ Sparky:`;
 
   try {
     const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents: fullPrompt,
-        config: {
-            systemInstruction: `You are a friendly, curious robot friend named Sparky. Your purpose is to answer questions from children about the provided video content. Your answers must be simple, safe, and strictly related to the video's topic of "${videoTitle}". Do not answer questions about unrelated topics, violence, or any mature themes. If a question is off-topic, inappropriate, or you don't know the answer, you MUST reply with ONLY the following exact phrase: ${AI_UNSURE_RESPONSE}`,
-            temperature: 0.7,
-            topK: 40,
-            topP: 0.95,
-        }
+      model: 'gemini-2.5-flash',
+      contents: fullPrompt,
+      config: {
+        systemInstruction: `You are a friendly, curious robot friend named Sparky. Your purpose is to answer questions from children about the provided video content. Your answers must be simple, safe, and strictly related to the video's topic of "${videoTitle}". Do not answer questions about unrelated topics, violence, or any mature themes. If a question is off-topic, inappropriate, or you don't know the answer, you MUST reply with ONLY the following exact phrase: ${AI_UNSURE_RESPONSE}`,
+        temperature: 0.7,
+        topK: 40,
+        topP: 0.95,
+      }
     });
     return response.text;
   } catch (error) {

@@ -1,14 +1,21 @@
 import React, { useState } from 'react';
 import { signInWithEmail, sendPasswordReset, signInWithGoogle } from '../services/firebase';
-import { HaevnLogo, GoogleIcon } from './icons';
+import { HaevnLogo, GoogleIcon, UserIcon } from './icons';
+import ChildLoginView from './ChildLoginView'; // We will use this component, but might need to adjust it to fit if we want it embedded. 
+// Actually, let's keep ChildLoginView as a full view but use state to render it here if "Child" tab is selected.
+import { User } from '../types';
 
 interface LoginViewProps {
   onLoginSuccess: () => void;
   onRegister: () => void;
-  onChildLogin: () => void;
+  onChildLogin: (childUser: User, familyId: string) => void;
+  verifyPin: (pin: string) => Promise<{ user: User; familyId: string } | null>;
 }
 
-const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onRegister, onChildLogin }) => {
+const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onRegister, onChildLogin, verifyPin }) => {
+  const [activeTab, setActiveTab] = useState<'parent' | 'child'>('parent');
+
+  // Parent Auth State
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -72,16 +79,58 @@ const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onRegister, onChi
     }
   };
 
+  // If Child Tab is active, we render the ChildLoginView. 
+  // However, ChildLoginView currently has a full screen background. 
+  // Ideally, we want to maintain the "Tabbed" feel. 
+  // For now, let's just conditionally render the content or the full view.
+  // The user asked for "2 different tabs".
+  // Let's create a wrapper that has the tabs.
+
+  if (activeTab === 'child') {
+    return (
+      <div className="relative">
+        {/* Back button/Tab Switcher overlay on top of ChildLoginView? 
+                 Or simply modify ChildLoginView to have a "Back to Parent" that switches the tab here?
+             */}
+        <ChildLoginView
+          onLoginSuccess={onChildLogin}
+          onBackToParentLogin={() => setActiveTab('parent')}
+          verifyPin={verifyPin}
+        />
+        {/* We overlay a discrete tab switcher if we want, but ChildLoginView has a "Parent" button already. */}
+      </div>
+    );
+  }
+
   return (
-    <div className="flex flex-col h-screen login-background overflow-hidden">
+    <div className="flex flex-col h-screen login-background overflow-hidden relative">
+
+      {/* Tab Switcher */}
+      <div className="absolute top-4 left-0 right-0 z-10 flex justify-center px-4">
+        <div className="bg-white/20 backdrop-blur-md p-1 rounded-full flex space-x-1 shadow-lg border border-white/20">
+          <button
+            onClick={() => setActiveTab('parent')}
+            className={`px-6 py-2 rounded-full font-bold text-sm transition-all ${(activeTab as string) === 'parent' ? 'bg-white text-indigo-600 shadow-sm' : 'text-white hover:bg-white/10'}`}
+          >
+            Parent
+          </button>
+          <button
+            onClick={() => setActiveTab('child')}
+            className={`px-6 py-2 rounded-full font-bold text-sm transition-all ${(activeTab as string) === 'child' ? 'bg-white text-indigo-600 shadow-sm' : 'text-white hover:bg-white/10'}`}
+          >
+            Child
+          </button>
+        </div>
+      </div>
+
       <main className="flex-1 flex flex-col items-center justify-center p-4">
-        <div className="w-full max-w-sm bg-white/90 dark:bg-gray-900/90 backdrop-blur-lg rounded-3xl border border-white/20 shadow-2xl p-8">
-          <div className="flex items-center justify-center mb-6">
+        <div className="w-full max-w-sm bg-white/90 dark:bg-gray-900/90 backdrop-blur-lg rounded-3xl border border-white/20 shadow-2xl p-8 pt-10">
+          <div className="flex items-center justify-center mb-4">
             <HaevnLogo className="w-40 h-auto" />
           </div>
 
           <p className="text-center text-gray-500 dark:text-gray-400 mb-6 text-sm">
-            A safe place to see the world.
+            Parent Access
           </p>
 
           {!showForgotPassword ? (
@@ -92,7 +141,7 @@ const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onRegister, onChi
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="Email address"
+                    placeholder="Parent Email"
                     className="w-full p-3 bg-gray-100 dark:bg-gray-700 rounded-xl border-2 border-transparent focus:border-indigo-500 focus:outline-none transition text-gray-800 dark:text-gray-200"
                     disabled={isLoading}
                   />
@@ -215,14 +264,7 @@ const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onRegister, onChi
           )}
         </div>
 
-        {/* Child Login Button */}
-        <button
-          onClick={onChildLogin}
-          className="mt-6 px-8 py-3 bg-gradient-to-r from-pink-500 to-purple-500 text-white font-bold rounded-full shadow-lg hover:shadow-xl hover:scale-105 transition-all duration-300 flex items-center space-x-2"
-        >
-          <span className="text-2xl">👦</span>
-          <span>I'm a Child</span>
-        </button>
+        {/* Removed the large bottom "I'm a Child" button since we have tabs now */}
       </main>
     </div>
   );
